@@ -455,7 +455,7 @@ impl Linker {
                 // AssemblyScript.
                 warn!("command module exporting '__rtti_base' is deprecated; pass `--runtime half` to the AssemblyScript compiler");
             } else {
-                bail!("command export '{}' is not a function", export.name());
+                //bail!("command export '{}' is not a function", export.name());
             }
         }
 
