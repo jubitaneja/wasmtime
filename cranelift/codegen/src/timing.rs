@@ -57,6 +57,7 @@ define_passes! {
     loop_analysis: "Loop analysis",
     postopt: "Post-legalization rewriting",
     preopt: "Pre-legalization rewriting",
+    superopt_baseline: "Superoptimization-based peephole optimizations (baseline)",
     dce: "Dead code elimination",
     legalize: "Legalization",
     gvn: "Global value numbering",
