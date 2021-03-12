@@ -4,7 +4,6 @@ use wiggle_test::{impl_errno, HostMemory, MemArea, MemAreas, WasiCtx};
 
 wiggle::from_witx!({
     witx: ["$CARGO_MANIFEST_DIR/tests/strings.witx"],
-    ctx: WasiCtx,
 });
 
 impl_errno!(types::Errno, types::GuestErrorConversion);
@@ -88,7 +87,7 @@ impl HelloStringExercise {
             self.test_word.len() as i32,
             self.return_ptr_loc.ptr as i32,
         );
-        assert_eq!(res, Ok(types::Errno::Ok.into()), "hello string errno");
+        assert_eq!(res, Ok(types::Errno::Ok as i32), "hello string errno");
 
         let given = host_memory
             .ptr::<u32>(self.return_ptr_loc.ptr)
@@ -209,7 +208,7 @@ impl MultiStringExercise {
             self.c.len() as i32,
             self.return_ptr_loc.ptr as i32,
         );
-        assert_eq!(res, Ok(types::Errno::Ok.into()), "multi string errno");
+        assert_eq!(res, Ok(types::Errno::Ok as i32), "multi string errno");
 
         let given = host_memory
             .ptr::<u32>(self.return_ptr_loc.ptr)
@@ -287,7 +286,7 @@ impl OverlappingStringExercise {
             a_len - self.offset_c as i32,
             self.return_ptr_loc.ptr as i32,
         );
-        assert_eq!(res, Ok(types::Errno::Ok.into()), "multi string errno");
+        assert_eq!(res, Ok(types::Errno::Ok as i32), "multi string errno");
 
         let given = host_memory
             .ptr::<u32>(self.return_ptr_loc.ptr)

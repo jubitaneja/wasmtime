@@ -9,7 +9,7 @@ use cranelift_codegen::{ir, settings, CodegenError, Context};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_native::builder as host_isa_builder;
 use log::trace;
-use memmap::{Mmap, MmapMut};
+use memmap2::{Mmap, MmapMut};
 use std::cmp::max;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -21,7 +21,7 @@ use thiserror::Error;
 /// `CompiledFunction`s and subsequently calling them through the use of a `Trampoline`. As its
 /// name indicates, this compiler is limited: any functionality that requires knowledge of things
 /// outside the [Function] will likely not work (e.g. global values, calls). For an example of this
-/// "outside-of-function" functionality, see `cranelift_simplejit::backend::SimpleJITBackend`.
+/// "outside-of-function" functionality, see `cranelift_jit::backend::JITBackend`.
 ///
 /// ```
 /// use cranelift_filetests::SingleFunctionCompiler;

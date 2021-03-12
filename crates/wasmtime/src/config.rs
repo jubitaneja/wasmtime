@@ -1,11 +1,15 @@
-use crate::externals::MemoryCreator;
+use crate::memory::MemoryCreator;
 use crate::trampoline::MemoryCreatorProxy;
+use crate::{func::HostFunc, Caller, FuncType, IntoFunc, Trap, Val, WasmRet, WasmTy};
 use anyhow::{bail, Result};
 use std::cmp;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt;
+use std::future::Future;
 #[cfg(feature = "cache")]
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use wasmparser::WasmFeatures;
 #[cfg(feature = "cache")]
@@ -14,6 +18,346 @@ use wasmtime_environ::settings::{self, Configurable, SetError};
 use wasmtime_environ::{isa, isa::TargetIsa, Tunables};
 use wasmtime_jit::{native, CompilationStrategy, Compiler};
 use wasmtime_profiling::{JitDumpAgent, NullProfilerAgent, ProfilingAgent, VTuneAgent};
+use wasmtime_runtime::{
+    InstanceAllocator, OnDemandInstanceAllocator, PoolingInstanceAllocator, RuntimeMemoryCreator,
+};
+
+/// Represents the limits placed on a module for compiling with the pooling instance allocation strategy.
+#[derive(Debug, Copy, Clone)]
+pub struct ModuleLimits {
+    /// The maximum number of imported functions for a module (default is 1000).
+    pub imported_functions: u32,
+
+    /// The maximum number of imported tables for a module (default is 0).
+    pub imported_tables: u32,
+
+    /// The maximum number of imported linear memories for a module (default is 0).
+    pub imported_memories: u32,
+
+    /// The maximum number of imported globals for a module (default is 0).
+    pub imported_globals: u32,
+
+    /// The maximum number of defined types for a module (default is 100).
+    pub types: u32,
+
+    /// The maximum number of defined functions for a module (default is 10000).
+    pub functions: u32,
+
+    /// The maximum number of defined tables for a module (default is 1).
+    pub tables: u32,
+
+    /// The maximum number of defined linear memories for a module (default is 1).
+    pub memories: u32,
+
+    /// The maximum number of defined globals for a module (default is 10).
+    pub globals: u32,
+
+    /// The maximum table elements for any table defined in a module (default is 10000).
+    ///
+    /// If a table's minimum element limit is greater than this value, the module will
+    /// fail to compile.
+    ///
+    /// If a table's maximum element limit is unbounded or greater than this value,
+    /// the maximum will be `table_elements` for the purpose of any `table.grow` instruction.
+    pub table_elements: u32,
+
+    /// The maximum number of pages for any linear memory defined in a module (default is 160).
+    ///
+    /// The default of 160 means at most 10 MiB of host memory may be committed for each instance.
+    ///
+    /// If a memory's minimum page limit is greater than this value, the module will
+    /// fail to compile.
+    ///
+    /// If a memory's maximum page limit is unbounded or greater than this value,
+    /// the maximum will be `memory_pages` for the purpose of any `memory.grow` instruction.
+    ///
+    /// This value cannot exceed any memory reservation size limits placed on instances.
+    pub memory_pages: u32,
+}
+
+impl Default for ModuleLimits {
+    fn default() -> Self {
+        // Use the defaults from the runtime
+        let wasmtime_runtime::ModuleLimits {
+            imported_functions,
+            imported_tables,
+            imported_memories,
+            imported_globals,
+            types,
+            functions,
+            tables,
+            memories,
+            globals,
+            table_elements,
+            memory_pages,
+        } = wasmtime_runtime::ModuleLimits::default();
+
+        Self {
+            imported_functions,
+            imported_tables,
+            imported_memories,
+            imported_globals,
+            types,
+            functions,
+            tables,
+            memories,
+            globals,
+            table_elements,
+            memory_pages,
+        }
+    }
+}
+
+// This exists so we can convert between the public Wasmtime API and the runtime representation
+// without having to export runtime types from the Wasmtime API.
+#[doc(hidden)]
+impl Into<wasmtime_runtime::ModuleLimits> for ModuleLimits {
+    fn into(self) -> wasmtime_runtime::ModuleLimits {
+        let Self {
+            imported_functions,
+            imported_tables,
+            imported_memories,
+            imported_globals,
+            types,
+            functions,
+            tables,
+            memories,
+            globals,
+            table_elements,
+            memory_pages,
+        } = self;
+
+        wasmtime_runtime::ModuleLimits {
+            imported_functions,
+            imported_tables,
+            imported_memories,
+            imported_globals,
+            types,
+            functions,
+            tables,
+            memories,
+            globals,
+            table_elements,
+            memory_pages,
+        }
+    }
+}
+
+/// Represents the limits placed on instances by the pooling instance allocation strategy.
+#[derive(Debug, Copy, Clone)]
+pub struct InstanceLimits {
+    /// The maximum number of concurrent instances supported (default is 1000).
+    pub count: u32,
+
+    /// The maximum size, in bytes, of host address space to reserve for each linear memory of an instance.
+    ///
+    /// Note: this value has important performance ramifications.
+    ///
+    /// On 64-bit platforms, the default for this value will be 6 GiB.  A value of less than 4 GiB will
+    /// force runtime bounds checking for memory accesses and thus will negatively impact performance.
+    /// Any value above 4 GiB will start eliding bounds checks provided the `offset` of the memory access is
+    /// less than (`memory_reservation_size` - 4 GiB).  A value of 8 GiB will completely elide *all* bounds
+    /// checks; consequently, 8 GiB will be the maximum supported value. The default of 6 GiB reserves
+    /// less host address space for each instance, but a memory access with an offset above 2 GiB will incur
+    /// runtime bounds checks.
+    ///
+    /// On 32-bit platforms, the default for this value will be 10 MiB. A 32-bit host has very limited address
+    /// space to reserve for a lot of concurrent instances.  As a result, runtime bounds checking will be used
+    /// for all memory accesses.  For better runtime performance, a 64-bit host is recommended.
+    ///
+    /// This value will be rounded up by the WebAssembly page size (64 KiB).
+    pub memory_reservation_size: u64,
+}
+
+impl Default for InstanceLimits {
+    fn default() -> Self {
+        let wasmtime_runtime::InstanceLimits {
+            count,
+            memory_reservation_size,
+        } = wasmtime_runtime::InstanceLimits::default();
+
+        Self {
+            count,
+            memory_reservation_size,
+        }
+    }
+}
+
+// This exists so we can convert between the public Wasmtime API and the runtime representation
+// without having to export runtime types from the Wasmtime API.
+#[doc(hidden)]
+impl Into<wasmtime_runtime::InstanceLimits> for InstanceLimits {
+    fn into(self) -> wasmtime_runtime::InstanceLimits {
+        let Self {
+            count,
+            memory_reservation_size,
+        } = self;
+
+        wasmtime_runtime::InstanceLimits {
+            count,
+            memory_reservation_size,
+        }
+    }
+}
+
+/// The allocation strategy to use for the pooling instance allocation strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolingAllocationStrategy {
+    /// Allocate from the next available instance.
+    NextAvailable,
+    /// Allocate from a random available instance.
+    Random,
+}
+
+impl Default for PoolingAllocationStrategy {
+    fn default() -> Self {
+        match wasmtime_runtime::PoolingAllocationStrategy::default() {
+            wasmtime_runtime::PoolingAllocationStrategy::NextAvailable => Self::NextAvailable,
+            wasmtime_runtime::PoolingAllocationStrategy::Random => Self::Random,
+        }
+    }
+}
+
+// This exists so we can convert between the public Wasmtime API and the runtime representation
+// without having to export runtime types from the Wasmtime API.
+#[doc(hidden)]
+impl Into<wasmtime_runtime::PoolingAllocationStrategy> for PoolingAllocationStrategy {
+    fn into(self) -> wasmtime_runtime::PoolingAllocationStrategy {
+        match self {
+            Self::NextAvailable => wasmtime_runtime::PoolingAllocationStrategy::NextAvailable,
+            Self::Random => wasmtime_runtime::PoolingAllocationStrategy::Random,
+        }
+    }
+}
+
+/// Represents the module instance allocation strategy to use.
+#[derive(Clone)]
+pub enum InstanceAllocationStrategy {
+    /// The on-demand instance allocation strategy.
+    ///
+    /// Resources related to a module instance are allocated at instantiation time and
+    /// immediately deallocated when the `Store` referencing the instance is dropped.
+    ///
+    /// This is the default allocation strategy for Wasmtime.
+    OnDemand,
+    /// The pooling instance allocation strategy.
+    ///
+    /// A pool of resources is created in advance and module instantiation reuses resources
+    /// from the pool. Resources are returned to the pool when the `Store` referencing the instance
+    /// is dropped.
+    Pooling {
+        /// The allocation strategy to use.
+        strategy: PoolingAllocationStrategy,
+        /// The module limits to use.
+        module_limits: ModuleLimits,
+        /// The instance limits to use.
+        instance_limits: InstanceLimits,
+    },
+}
+
+impl InstanceAllocationStrategy {
+    /// The default pooling instance allocation strategy.
+    pub fn pooling() -> Self {
+        Self::Pooling {
+            strategy: PoolingAllocationStrategy::default(),
+            module_limits: ModuleLimits::default(),
+            instance_limits: InstanceLimits::default(),
+        }
+    }
+}
+
+impl Default for InstanceAllocationStrategy {
+    fn default() -> Self {
+        Self::OnDemand
+    }
+}
+
+/// This type is used for storing host functions in a `Config`.
+///
+/// The module and function names are interned for more compact storage.
+#[derive(Clone)]
+struct HostFuncMap {
+    index_map: HashMap<Arc<str>, usize>,
+    strings: Vec<Arc<str>>,
+    funcs: HashMap<(usize, usize), (Arc<HostFunc>, bool)>,
+}
+
+impl HostFuncMap {
+    fn new() -> Self {
+        Self {
+            index_map: HashMap::new(),
+            strings: Vec::new(),
+            funcs: HashMap::new(),
+        }
+    }
+
+    fn insert(&mut self, module: &str, name: &str, async_required: bool, func: HostFunc) {
+        let key = (self.intern_str(module), self.intern_str(name));
+        self.funcs.insert(key, (Arc::new(func), async_required));
+    }
+
+    fn get(&self, module: &str, name: &str) -> Option<&HostFunc> {
+        let key = (
+            self.index_map.get(module).cloned()?,
+            self.index_map.get(name).cloned()?,
+        );
+        self.funcs.get(&key).map(|f| f.0.as_ref())
+    }
+
+    fn intern_str(&mut self, string: &str) -> usize {
+        if let Some(idx) = self.index_map.get(string) {
+            return *idx;
+        }
+        let string: Arc<str> = string.into();
+        let idx = self.strings.len();
+        self.strings.push(string.clone());
+        self.index_map.insert(string, idx);
+        idx
+    }
+
+    fn async_required(&self) -> bool {
+        self.funcs.values().any(|f| f.1)
+    }
+}
+
+macro_rules! generate_wrap_async_host_func {
+    ($num:tt $($args:ident)*) => (paste::paste!{
+        /// Same as [`Config::wrap_host_func`], except the closure asynchronously produces
+        /// its result. For more information see the [`Func`](crate::Func) documentation.
+        ///
+        /// Note: creating an engine will fail if an async host function is defined and
+        /// [async support](Config::async_support) is not enabled.
+        #[allow(non_snake_case)]
+        #[cfg(feature = "async")]
+        #[cfg_attr(nightlydoc, doc(cfg(feature = "async")))]
+        pub fn [<wrap $num _host_func_async>]<$($args,)* R>(
+            &mut self,
+            module: &str,
+            name: &str,
+            func: impl for <'a> Fn(Caller<'a>, $($args),*) -> Box<dyn Future<Output = R> + 'a> + Send + Sync + 'static,
+        )
+        where
+            $($args: WasmTy,)*
+            R: WasmRet,
+        {
+            // Defer the check for async support until engine creation time to not introduce an order dependency
+            self.host_funcs.insert(
+                module,
+                name,
+                true,
+                HostFunc::wrap(move |caller: Caller<'_>, $($args: $args),*| {
+                    let store = caller.store().clone();
+                    debug_assert!(store.async_support());
+                    let mut future = Pin::from(func(caller, $($args),*));
+                    match store.block_on(future.as_mut()) {
+                        Ok(ret) => ret.into_fallible(),
+                        Err(e) => R::fallible_from_trap(e),
+                    }
+                })
+            );
+        }
+    })
+}
 
 /// Global configuration options used to create an [`Engine`](crate::Engine)
 /// and customize its behavior.
@@ -29,15 +373,24 @@ pub struct Config {
     #[cfg(feature = "cache")]
     pub(crate) cache_config: CacheConfig,
     pub(crate) profiler: Arc<dyn ProfilingAgent>,
-    pub(crate) memory_creator: Option<MemoryCreatorProxy>,
+    pub(crate) mem_creator: Option<Arc<dyn RuntimeMemoryCreator>>,
+    pub(crate) allocation_strategy: InstanceAllocationStrategy,
     pub(crate) max_wasm_stack: usize,
     pub(crate) features: WasmFeatures,
+    pub(crate) wasm_backtrace_details_env_used: bool,
+    pub(crate) max_instances: usize,
+    pub(crate) max_tables: usize,
+    pub(crate) max_memories: usize,
+    #[cfg(feature = "async")]
+    pub(crate) async_stack_size: usize,
+    host_funcs: HostFuncMap,
+    pub(crate) async_support: bool,
 }
 
 impl Config {
     /// Creates a new configuration object with the default configuration
     /// specified.
-    pub fn new() -> Config {
+    pub fn new() -> Self {
         let mut flags = settings::builder();
 
         // There are two possible traps for division, and this way
@@ -61,7 +414,7 @@ impl Config {
             .set("enable_probestack", "false")
             .expect("should be valid flag");
 
-        Config {
+        let mut ret = Self {
             tunables: Tunables::default(),
             flags,
             isa_flags: native::builder(),
@@ -69,15 +422,110 @@ impl Config {
             #[cfg(feature = "cache")]
             cache_config: CacheConfig::new_cache_disabled(),
             profiler: Arc::new(NullProfilerAgent),
-            memory_creator: None,
+            mem_creator: None,
+            allocation_strategy: InstanceAllocationStrategy::OnDemand,
             max_wasm_stack: 1 << 20,
+            wasm_backtrace_details_env_used: false,
             features: WasmFeatures {
                 reference_types: true,
                 bulk_memory: true,
                 multi_value: true,
                 ..WasmFeatures::default()
             },
-        }
+            max_instances: 10_000,
+            max_tables: 10_000,
+            max_memories: 10_000,
+            #[cfg(feature = "async")]
+            async_stack_size: 2 << 20,
+            host_funcs: HostFuncMap::new(),
+            async_support: false,
+        };
+        ret.wasm_backtrace_details(WasmBacktraceDetails::Environment);
+        ret
+    }
+
+    /// Whether or not to enable support for asynchronous functions in Wasmtime.
+    ///
+    /// When enabled, the config can optionally define host functions with `async`.
+    /// Instances created and functions called with this `Config` *must* be called
+    /// through their asynchronous APIs, however. For example using
+    /// [`Func::call`](crate::Func::call) will panic when used with this config.
+    ///
+    /// # Asynchronous Wasm
+    ///
+    /// WebAssembly does not currently have a way to specify at the bytecode
+    /// level what is and isn't async. Host-defined functions, however, may be
+    /// defined as `async`. WebAssembly imports always appear synchronous, which
+    /// gives rise to a bit of an impedance mismatch here. To solve this
+    /// Wasmtime supports "asynchronous configs" which enables calling these
+    /// asynchronous functions in a way that looks synchronous to the executing
+    /// WebAssembly code.
+    ///
+    /// An asynchronous config must always invoke wasm code asynchronously,
+    /// meaning we'll always represent its computation as a
+    /// [`Future`](std::future::Future). The `poll` method of the futures
+    /// returned by Wasmtime will perform the actual work of calling the
+    /// WebAssembly. Wasmtime won't manage its own thread pools or similar,
+    /// that's left up to the embedder.
+    ///
+    /// To implement futures in a way that WebAssembly sees asynchronous host
+    /// functions as synchronous, all async Wasmtime futures will execute on a
+    /// separately allocated native stack from the thread otherwise executing
+    /// Wasmtime. This separate native stack can then be switched to and from.
+    /// Using this whenever an `async` host function returns a future that
+    /// resolves to `Pending` we switch away from the temporary stack back to
+    /// the main stack and propagate the `Pending` status.
+    ///
+    /// In general it's encouraged that the integration with `async` and
+    /// wasmtime is designed early on in your embedding of Wasmtime to ensure
+    /// that it's planned that WebAssembly executes in the right context of your
+    /// application.
+    ///
+    /// # Execution in `poll`
+    ///
+    /// The [`Future::poll`](std::future::Future::poll) method is the main
+    /// driving force behind Rust's futures. That method's own documentation
+    /// states "an implementation of `poll` should strive to return quickly, and
+    /// should not block". This, however, can be at odds with executing
+    /// WebAssembly code as part of the `poll` method itself. If your
+    /// WebAssembly is untrusted then this could allow the `poll` method to take
+    /// arbitrarily long in the worst case, likely blocking all other
+    /// asynchronous tasks.
+    ///
+    /// To remedy this situation you have a two possible ways to solve this:
+    ///
+    /// * First you can spawn futures into a thread pool. Care must be taken for
+    ///   this because Wasmtime futures are not `Send` or `Sync`. If you ensure
+    ///   that the entire state of a `Store` is wrapped up in a single future,
+    ///   though, you can send the whole future at once to a separate thread. By
+    ///   doing this in a thread pool you are relaxing the requirement that
+    ///   `Future::poll` must be fast because your future is executing on a
+    ///   separate thread. This strategy, however, would likely still require
+    ///   some form of cancellation via [`crate::Store::interrupt_handle`] to ensure
+    ///   wasm doesn't take *too* long to execute.
+    ///
+    /// * Alternatively you can enable the
+    ///   [`Config::consume_fuel`](crate::Config::consume_fuel) method as well
+    ///   as [`crate::Store::out_of_fuel_async_yield`] When doing so this will
+    ///   configure Wasmtime futures to yield periodically while they're
+    ///   executing WebAssembly code. After consuming the specified amount of
+    ///   fuel wasm futures will return `Poll::Pending` from their `poll`
+    ///   method, and will get automatically re-polled later. This enables the
+    ///   `Future::poll` method to take roughly a fixed amount of time since
+    ///   fuel is guaranteed to get consumed while wasm is executing. Note that
+    ///   to prevent infinite execution of wasm you'll still need to use
+    ///   [`crate::Store::interrupt_handle`].
+    ///
+    /// In either case special care needs to be taken when integrating
+    /// asynchronous wasm into your application. You should carefully plan where
+    /// WebAssembly will execute and what compute resources will be allotted to
+    /// it. If Wasmtime doesn't support exactly what you'd like just yet, please
+    /// feel free to open an issue!
+    #[cfg(feature = "async")]
+    #[cfg_attr(nightlydoc, doc(cfg(feature = "async")))]
+    pub fn async_support(&mut self, enable: bool) -> &mut Self {
+        self.async_support = enable;
+        self
     }
 
     /// Configures whether DWARF debug information will be emitted during
@@ -85,7 +533,33 @@ impl Config {
     ///
     /// By default this option is `false`.
     pub fn debug_info(&mut self, enable: bool) -> &mut Self {
-        self.tunables.debug_info = enable;
+        self.tunables.generate_native_debuginfo = enable;
+        self
+    }
+
+    /// Configures whether backtraces in `Trap` will parse debug info in the wasm file to
+    /// have filename/line number information.
+    ///
+    /// When enabled this will causes modules to retain debugging information
+    /// found in wasm binaries. This debug information will be used when a trap
+    /// happens to symbolicate each stack frame and attempt to print a
+    /// filename/line number for each wasm frame in the stack trace.
+    ///
+    /// By default this option is `WasmBacktraceDetails::Environment`, meaning
+    /// that wasm will read `WASMTIME_BACKTRACE_DETAILS` to indicate whether details
+    /// should be parsed.
+    pub fn wasm_backtrace_details(&mut self, enable: WasmBacktraceDetails) -> &mut Self {
+        self.wasm_backtrace_details_env_used = false;
+        self.tunables.parse_wasm_debuginfo = match enable {
+            WasmBacktraceDetails::Enable => true,
+            WasmBacktraceDetails::Disable => false,
+            WasmBacktraceDetails::Environment => {
+                self.wasm_backtrace_details_env_used = true;
+                std::env::var("WASMTIME_BACKTRACE_DETAILS")
+                    .map(|s| s == "1")
+                    .unwrap_or(false)
+            }
+        };
         self
     }
 
@@ -101,23 +575,80 @@ impl Config {
         self
     }
 
-    /// Configures the maximum amount of native stack space available to
+    /// Configures whether execution of WebAssembly will "consume fuel" to
+    /// either halt or yield execution as desired.
+    ///
+    /// This option is similar in purpose to [`Config::interruptable`] where
+    /// you can prevent infinitely-executing WebAssembly code. The difference
+    /// is that this option allows deterministic execution of WebAssembly code
+    /// by instrumenting generated code consume fuel as it executes. When fuel
+    /// runs out the behavior is defined by configuration within a [`Store`],
+    /// and by default a trap is raised.
+    ///
+    /// Note that a [`Store`] starts with no fuel, so if you enable this option
+    /// you'll have to be sure to pour some fuel into [`Store`] before
+    /// executing some code.
+    ///
+    /// By default this option is `false`.
+    ///
+    /// [`Store`]: crate::Store
+    pub fn consume_fuel(&mut self, enable: bool) -> &mut Self {
+        self.tunables.consume_fuel = enable;
+        self
+    }
+
+    /// Configures the maximum amount of stack space available for
     /// executing WebAssembly code.
     ///
-    /// WebAssembly code currently executes on the native call stack for its own
-    /// call frames. WebAssembly, however, also has well-defined semantics on
-    /// stack overflow. This is intended to be a knob which can help configure
-    /// how much native stack space a wasm module is allowed to consume. Note
-    /// that the number here is not super-precise, but rather wasm will take at
-    /// most "pretty close to this much" stack space.
+    /// WebAssembly has well-defined semantics on stack overflow. This is
+    /// intended to be a knob which can help configure how much stack space
+    /// wasm execution is allowed to consume. Note that the number here is not
+    /// super-precise, but rather wasm will take at most "pretty close to this
+    /// much" stack space.
     ///
     /// If a wasm call (or series of nested wasm calls) take more stack space
     /// than the `size` specified then a stack overflow trap will be raised.
     ///
-    /// By default this option is 1 MB.
-    pub fn max_wasm_stack(&mut self, size: usize) -> &mut Self {
+    /// When the `async` feature is enabled, this value cannot exceed the
+    /// `async_stack_size` option. Be careful not to set this value too close
+    /// to `async_stack_size` as doing so may limit how much stack space
+    /// is available for host functions. Unlike wasm functions that trap
+    /// on stack overflow, a host function that overflows the stack will
+    /// abort the process.
+    ///
+    /// By default this option is 1 MiB.
+    pub fn max_wasm_stack(&mut self, size: usize) -> Result<&mut Self> {
+        #[cfg(feature = "async")]
+        if size > self.async_stack_size {
+            bail!("wasm stack size cannot exceed the async stack size");
+        }
+
+        if size == 0 {
+            bail!("wasm stack size cannot be zero");
+        }
+
         self.max_wasm_stack = size;
-        self
+        Ok(self)
+    }
+
+    /// Configures the size of the stacks used for asynchronous execution.
+    ///
+    /// This setting configures the size of the stacks that are allocated for
+    /// asynchronous execution. The value cannot be less than `max_wasm_stack`.
+    ///
+    /// The amount of stack space guaranteed for host functions is
+    /// `async_stack_size - max_wasm_stack`, so take care not to set these two values
+    /// close to one another; doing so may cause host functions to overflow the
+    /// stack and abort the process.
+    ///
+    /// By default this option is 2 MiB.
+    #[cfg(feature = "async")]
+    pub fn async_stack_size(&mut self, size: usize) -> Result<&mut Self> {
+        if size < self.max_wasm_stack {
+            bail!("async stack size cannot be less than the maximum wasm stack size");
+        }
+        self.async_stack_size = size;
+        Ok(self)
     }
 
     /// Configures whether the WebAssembly threads proposal will be enabled for
@@ -289,7 +820,7 @@ impl Config {
         Ok(self)
     }
 
-    /// Creates a default profiler based on the profiling strategy choosen
+    /// Creates a default profiler based on the profiling strategy chosen.
     ///
     /// Profiler creation calls the type's default initializer where the purpose is
     /// really just to put in place the type used for profiling.
@@ -353,6 +884,20 @@ impl Config {
         self
     }
 
+    /// Clears native CPU flags inferred from the host.
+    ///
+    /// By default Wasmtime will tune generated code for the host that Wasmtime
+    /// itself is running on. If you're compiling on one host, however, and
+    /// shipping artifacts to another host then this behavior may not be
+    /// desired. This function will clear all inferred native CPU features.
+    ///
+    /// To enable CPU features afterwards it's recommended to use the
+    /// [`Config::cranelift_other_flag`] method.
+    pub fn cranelift_clear_cpu_flags(&mut self) -> &mut Self {
+        self.isa_flags = native::builder_without_flags();
+        self
+    }
+
     /// Allows settings another Cranelift flag defined by a flag name and value. This allows
     /// fine-tuning of Cranelift settings.
     ///
@@ -398,6 +943,7 @@ impl Config {
     ///
     /// [docs]: https://bytecodealliance.github.io/wasmtime/cli-cache.html
     #[cfg(feature = "cache")]
+    #[cfg_attr(nightlydoc, doc(cfg(feature = "cache")))]
     pub fn cache_config_load(&mut self, path: impl AsRef<Path>) -> Result<&mut Self> {
         self.cache_config = CacheConfig::from_file(Some(path.as_ref()))?;
         Ok(self)
@@ -425,14 +971,30 @@ impl Config {
     ///
     /// [docs]: https://bytecodealliance.github.io/wasmtime/cli-cache.html
     #[cfg(feature = "cache")]
+    #[cfg_attr(nightlydoc, doc(cfg(feature = "cache")))]
     pub fn cache_config_load_default(&mut self) -> Result<&mut Self> {
         self.cache_config = CacheConfig::from_file(None)?;
         Ok(self)
     }
 
-    /// Sets a custom memory creator
+    /// Sets a custom memory creator.
+    ///
+    /// Custom memory creators are used when creating host `Memory` objects or when
+    /// creating instance linear memories for the on-demand instance allocation strategy.
     pub fn with_host_memory(&mut self, mem_creator: Arc<dyn MemoryCreator>) -> &mut Self {
-        self.memory_creator = Some(MemoryCreatorProxy { mem_creator });
+        self.mem_creator = Some(Arc::new(MemoryCreatorProxy(mem_creator)));
+        self
+    }
+
+    /// Sets the instance allocation strategy to use.
+    ///
+    /// When using the pooling instance allocation strategy, all linear memories will be created as "static".
+    ///
+    /// This means the [`Config::static_memory_maximum_size`] and [`Config::static_memory_guard_size`] options
+    /// will be ignored in favor of [`InstanceLimits::memory_reservation_size`] when the pooling instance
+    /// allocation strategy is used.
+    pub fn allocation_strategy(&mut self, strategy: InstanceAllocationStrategy) -> &mut Self {
+        self.allocation_strategy = strategy;
         self
     }
 
@@ -605,6 +1167,136 @@ impl Config {
         self
     }
 
+    /// Configures the maximum number of instances which can be created within
+    /// this `Store`.
+    ///
+    /// Instantiation will fail with an error if this limit is exceeded.
+    ///
+    /// This value defaults to 10,000.
+    pub fn max_instances(&mut self, instances: usize) -> &mut Self {
+        self.max_instances = instances;
+        self
+    }
+
+    /// Configures the maximum number of tables which can be created within
+    /// this `Store`.
+    ///
+    /// Instantiation will fail with an error if this limit is exceeded.
+    ///
+    /// This value defaults to 10,000.
+    pub fn max_tables(&mut self, tables: usize) -> &mut Self {
+        self.max_tables = tables;
+        self
+    }
+
+    /// Configures the maximum number of memories which can be created within
+    /// this `Store`.
+    ///
+    /// Instantiation will fail with an error if this limit is exceeded.
+    ///
+    /// This value defaults to 10,000.
+    pub fn max_memories(&mut self, memories: usize) -> &mut Self {
+        self.max_memories = memories;
+        self
+    }
+
+    /// Defines a host function for the [`Config`] for the given callback.
+    ///
+    /// Use [`Store::get_host_func`](crate::Store::get_host_func) to get a [`Func`](crate::Func) representing the function.
+    ///
+    /// Note that the implementation of `func` must adhere to the `ty`
+    /// signature given, error or traps may occur if it does not respect the
+    /// `ty` signature.
+    ///
+    /// Additionally note that this is quite a dynamic function since signatures
+    /// are not statically known. For performance reasons, it's recommended
+    /// to use [`Config::wrap_host_func`] if you can because with statically known
+    /// signatures the engine can optimize the implementation much more.
+    ///
+    /// The callback must be `Send` and `Sync` as it is shared between all engines created
+    /// from the `Config`.  For more relaxed bounds, use [`Func::new`](crate::Func::new) to define the function.
+    pub fn define_host_func(
+        &mut self,
+        module: &str,
+        name: &str,
+        ty: FuncType,
+        func: impl Fn(Caller<'_>, &[Val], &mut [Val]) -> Result<(), Trap> + Send + Sync + 'static,
+    ) {
+        self.host_funcs
+            .insert(module, name, false, HostFunc::new(self, ty, func));
+    }
+
+    /// Defines an async host function for the [`Config`] for the given callback.
+    ///
+    /// Use [`Store::get_host_func`](crate::Store::get_host_func) to get a [`Func`](crate::Func) representing the function.
+    ///
+    /// This function is the asynchronous analogue of [`Config::define_host_func`] and much of
+    /// that documentation applies to this as well.
+    ///
+    /// Additionally note that this is quite a dynamic function since signatures
+    /// are not statically known. For performance reasons, it's recommended
+    /// to use `Config::wrap$N_host_func_async` if you can because with statically known
+    /// signatures the engine can optimize the implementation much more.
+    ///
+    /// The callback must be `Send` and `Sync` as it is shared between all engines created
+    /// from the `Config`.  For more relaxed bounds, use [`Func::new_async`](crate::Func::new_async) to define the function.
+    ///
+    /// Note: creating an engine will fail if an async host function is defined and [async support](Config::async_support)
+    /// is not enabled.
+    #[cfg(feature = "async")]
+    #[cfg_attr(nightlydoc, doc(cfg(feature = "async")))]
+    pub fn define_host_func_async<F>(&mut self, module: &str, name: &str, ty: FuncType, func: F)
+    where
+        F: for<'a> Fn(
+                Caller<'a>,
+                &'a [Val],
+                &'a mut [Val],
+            ) -> Box<dyn Future<Output = Result<(), Trap>> + 'a>
+            + Send
+            + Sync
+            + 'static,
+    {
+        // Defer the check for async support until engine creation time to not introduce an order dependency
+        self.host_funcs.insert(
+            module,
+            name,
+            true,
+            HostFunc::new(self, ty, move |caller, params, results| {
+                let store = caller.store().clone();
+                debug_assert!(store.async_support());
+                let mut future = Pin::from(func(caller, params, results));
+                match store.block_on(future.as_mut()) {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(trap)) | Err(trap) => Err(trap),
+                }
+            }),
+        );
+    }
+
+    /// Defines a host function for the [`Config`] from the given Rust closure.
+    ///
+    /// Use [`Store::get_host_func`](crate::Store::get_host_func) to get a [`Func`](crate::Func) representing the function.
+    ///
+    /// See [`Func::wrap`](crate::Func::wrap) for information about accepted parameter and result types for the closure.
+    ///
+    /// The closure must be `Send` and `Sync` as it is shared between all engines created
+    /// from the `Config`.  For more relaxed bounds, use [`Func::wrap`](crate::Func::wrap) to wrap the closure.
+    pub fn wrap_host_func<Params, Results>(
+        &mut self,
+        module: &str,
+        name: &str,
+        func: impl IntoFunc<Params, Results> + Send + Sync,
+    ) {
+        self.host_funcs
+            .insert(module, name, false, HostFunc::wrap(func));
+    }
+
+    for_each_function_signature!(generate_wrap_async_host_func);
+
+    pub(crate) fn get_host_func(&self, module: &str, name: &str) -> Option<&HostFunc> {
+        self.host_funcs.get(module, name)
+    }
+
     pub(crate) fn target_isa(&self) -> Box<dyn TargetIsa> {
         self.isa_flags
             .clone()
@@ -617,9 +1309,49 @@ impl Config {
         self.isa_flags.clone().finish(settings::Flags::new(flags))
     }
 
-    pub(crate) fn build_compiler(&self) -> Compiler {
+    pub(crate) fn validate(&self) -> Result<()> {
+        // This is used to validate that the config is internally consistent prior to
+        // creating an engine using this config.
+
+        // Check that there isn't a host function defined that requires async support enabled
+        if self.host_funcs.async_required() && !self.async_support {
+            bail!("an async host function cannot be defined without async support enabled in the config");
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn build_compiler(&self, allocator: &dyn InstanceAllocator) -> Compiler {
         let isa = self.target_isa();
-        Compiler::new(isa, self.strategy, self.tunables.clone(), self.features)
+        let mut tunables = self.tunables.clone();
+        allocator.adjust_tunables(&mut tunables);
+        Compiler::new(isa, self.strategy, tunables, self.features)
+    }
+
+    pub(crate) fn build_allocator(&self) -> Result<Box<dyn InstanceAllocator>> {
+        match self.allocation_strategy {
+            InstanceAllocationStrategy::OnDemand => Ok(Box::new(OnDemandInstanceAllocator::new(
+                self.mem_creator.clone(),
+            ))),
+            InstanceAllocationStrategy::Pooling {
+                strategy,
+                module_limits,
+                instance_limits,
+            } => {
+                #[cfg(feature = "async")]
+                let stack_size = self.async_stack_size;
+
+                #[cfg(not(feature = "async"))]
+                let stack_size = 0;
+
+                Ok(Box::new(PoolingInstanceAllocator::new(
+                    strategy.into(),
+                    module_limits.into(),
+                    instance_limits.into(),
+                    stack_size,
+                )?))
+            }
+        }
     }
 }
 
@@ -640,7 +1372,8 @@ impl Default for Config {
 impl fmt::Debug for Config {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Config")
-            .field("debug_info", &self.tunables.debug_info)
+            .field("debug_info", &self.tunables.generate_native_debuginfo)
+            .field("parse_wasm_debuginfo", &self.tunables.parse_wasm_debuginfo)
             .field("strategy", &self.strategy)
             .field("wasm_threads", &self.features.threads)
             .field("wasm_reference_types", &self.features.reference_types)
@@ -711,4 +1444,20 @@ pub enum ProfilingStrategy {
 
     /// Collect profiling info using the "ittapi", used with `VTune` on Linux.
     VTune,
+}
+
+/// Select how wasm backtrace detailed information is handled.
+#[derive(Debug, Clone, Copy)]
+pub enum WasmBacktraceDetails {
+    /// Support is unconditionally enabled and wasmtime will parse and read
+    /// debug information.
+    Enable,
+
+    /// Support is disabled, and wasmtime will not parse debug information for
+    /// backtrace details.
+    Disable,
+
+    /// Support for backtrace details is conditional on the
+    /// `WASMTIME_BACKTRACE_DETAILS` environment variable.
+    Environment,
 }

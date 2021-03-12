@@ -5,18 +5,24 @@ edition = "2018"
 name = "wasmtime-fuzzing"
 publish = false
 version = "0.19.0"
+license = "Apache-2.0 WITH LLVM-exception"
 
 [dependencies]
 anyhow = "1.0.22"
-arbitrary = { version = "0.4.1", features = ["derive"] }
+arbitrary = { version = "1.0.0", features = ["derive"] }
 env_logger = "0.8.1"
 log = "0.4.8"
 rayon = "1.2.1"
-wasmparser = "0.68.0"
-wasmprinter = "0.2.15"
+wasmparser = "0.76"
+wasmprinter = "0.2.24"
 wasmtime = { path = "../wasmtime" }
 wasmtime-wast = { path = "../wast" }
-wasm-smith = "0.1.10"
+wasm-encoder = "0.4"
+wasm-smith = "0.4.0"
+wasmi = "0.7.0"
 
 [dev-dependencies]
-wat = "1.0.28"
+wat = "1.0.36"
+
+[features]
+experimental_x64 = ["wasmtime/experimental_x64"]

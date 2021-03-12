@@ -13,6 +13,9 @@ use core::num::NonZeroU32;
 use core::ops::{Deref, DerefMut};
 use core::str::FromStr;
 
+#[cfg(feature = "enable-serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::ir::{self, trapcode::TrapCode, types, Block, FuncRef, JumpTable, SigRef, Type, Value};
 use crate::isa;
 
@@ -277,7 +280,7 @@ impl InstructionData {
                 ref mut destination,
                 ..
             } => Some(destination),
-            Self::BranchTable { .. } => None,
+            Self::BranchTable { .. } | Self::IndirectJump { .. } => None,
             _ => {
                 debug_assert!(!self.opcode().is_branch());
                 None

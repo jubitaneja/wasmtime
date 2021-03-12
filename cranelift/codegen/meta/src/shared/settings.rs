@@ -216,6 +216,37 @@ pub(crate) fn define() -> SettingGroup {
         0,
     );
 
+    settings.add_bool(
+        "enable_llvm_abi_extensions",
+        r#"
+            Enable various ABI extensions defined by LLVM's behavior.
+
+            In some cases, LLVM's implementation of an ABI (calling convention)
+            goes beyond a standard and supports additional argument types or
+            behavior. This option instructs Cranelift codegen to follow LLVM's
+            behavior where applicable.
+
+            Currently, this applies only to Windows Fastcall on x86-64, and
+            allows an `i128` argument to be spread across two 64-bit integer
+            registers. The Fastcall implementation otherwise does not support
+            `i128` arguments, and will panic if they are present and this
+            option is not set.
+            "#,
+        false,
+    );
+
+    settings.add_bool(
+        "unwind_info",
+        r#"
+           Generate unwind info. This increases metadata size and compile time,
+           but allows for the debugger to trace frames, is needed for GC tracing
+           that relies on libunwind (such as in Wasmtime), and is
+           unconditionally needed on certain platforms (such as Windows) that
+           must always be able to unwind.
+          "#,
+        true,
+    );
+
     // BaldrMonkey requires that not-yet-relocated function addresses be encoded
     // as all-ones bitpatterns.
     settings.add_bool(

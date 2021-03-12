@@ -20,7 +20,6 @@
 //! appropriate for the requested ISA:
 //!
 //! ```
-//! # extern crate cranelift_codegen;
 //! # #[macro_use] extern crate target_lexicon;
 //! use cranelift_codegen::isa;
 //! use cranelift_codegen::settings::{self, Configurable};
@@ -30,12 +29,12 @@
 //! let shared_builder = settings::builder();
 //! let shared_flags = settings::Flags::new(shared_builder);
 //!
-//! match isa::lookup(triple!("riscv32")) {
+//! match isa::lookup(triple!("x86_64")) {
 //!     Err(_) => {
-//!         // The RISC-V target ISA is not available.
+//!         // The x86_64 target ISA is not available.
 //!     }
 //!     Ok(mut isa_builder) => {
-//!         isa_builder.set("supports_m", "on");
+//!         isa_builder.set("use_popcnt", "on");
 //!         let isa = isa_builder.finish(shared_flags);
 //!     }
 //! }
@@ -69,16 +68,20 @@ use alloc::boxed::Box;
 use core::any::Any;
 use core::fmt;
 use core::fmt::{Debug, Formatter};
+use core::hash::Hasher;
 use target_lexicon::{triple, Architecture, PointerWidth, Triple};
 use thiserror::Error;
 
 #[cfg(feature = "riscv")]
 mod riscv;
 
-// Exclude the old x86 backend when the new one is enabled; it is unreachable
-// anyway (requesting the x86-64 ISA will return the new backend), and a number
-// of old-backend-specific tests fail.
-#[cfg(all(feature = "x86", not(feature = "x64")))]
+// N.B.: the old x86-64 backend (`x86`) and the new one (`x64`) can both be
+// included; if the new backend is included, then it is the default backend
+// returned for an x86-64 triple, but a specific option can request the old
+// backend. It is important to have the ability to instantiate *both* backends
+// in the same build so that we can do things like differential fuzzing between
+// backends, or perhaps offer a runtime configuration flag in the future.
+#[cfg(feature = "x86")]
 mod x86;
 
 #[cfg(feature = "x64")]
@@ -117,24 +120,56 @@ macro_rules! isa_builder {
     }};
 }
 
+/// The "variant" for a given target. On one platform (x86-64), we have two
+/// backends, the "old" and "new" one; the new one is the default if included
+/// in the build configuration and not otherwise specified.
+#[derive(Clone, Copy)]
+pub enum BackendVariant {
+    /// Any backend available.
+    Any,
+    /// A "legacy" backend: one that operates using legalizations and encodings.
+    Legacy,
+    /// A backend built on `MachInst`s and the `VCode` framework.
+    MachInst,
+}
+
+impl Default for BackendVariant {
+    fn default() -> Self {
+        BackendVariant::Any
+    }
+}
+
+/// Look for an ISA for the given `triple`, selecting the backend variant given
+/// by `variant` if available.
+pub fn lookup_variant(triple: Triple, variant: BackendVariant) -> Result<Builder, LookupError> {
+    match (triple.architecture, variant) {
+        (Architecture::Riscv32 { .. }, _) | (Architecture::Riscv64 { .. }, _) => {
+            isa_builder!(riscv, (feature = "riscv"), triple)
+        }
+        (Architecture::X86_64, BackendVariant::Legacy) => {
+            isa_builder!(x86, (feature = "x86"), triple)
+        }
+        (Architecture::X86_64, BackendVariant::MachInst) => {
+            isa_builder!(x64, (feature = "x64"), triple)
+        }
+        #[cfg(feature = "x64")]
+        (Architecture::X86_64, BackendVariant::Any) => {
+            isa_builder!(x64, (feature = "x64"), triple)
+        }
+        #[cfg(not(feature = "x64"))]
+        (Architecture::X86_64, BackendVariant::Any) => {
+            isa_builder!(x86, (feature = "x86"), triple)
+        }
+        (Architecture::Arm { .. }, _) => isa_builder!(arm32, (feature = "arm32"), triple),
+        (Architecture::Aarch64 { .. }, _) => isa_builder!(aarch64, (feature = "arm64"), triple),
+        _ => Err(LookupError::Unsupported),
+    }
+}
+
 /// Look for an ISA for the given `triple`.
 /// Return a builder that can create a corresponding `TargetIsa`.
 pub fn lookup(triple: Triple) -> Result<Builder, LookupError> {
-    match triple.architecture {
-        Architecture::Riscv32 { .. } | Architecture::Riscv64 { .. } => {
-            isa_builder!(riscv, (feature = "riscv"), triple)
-        }
-        Architecture::X86_32 { .. } | Architecture::X86_64 => {
-            if cfg!(feature = "x64") {
-                isa_builder!(x64, (feature = "x64"), triple)
-            } else {
-                isa_builder!(x86, (all(feature = "x86", not(feature = "x64"))), triple)
-            }
-        }
-        Architecture::Arm { .. } => isa_builder!(arm32, (feature = "arm32"), triple),
-        Architecture::Aarch64 { .. } => isa_builder!(aarch64, (feature = "arm64"), triple),
-        _ => Err(LookupError::Unsupported),
-    }
+    lookup_variant(triple, BackendVariant::Any)
 }
 
 /// Look for a supported ISA with the given `name`.
@@ -230,9 +265,21 @@ pub trait TargetIsa: fmt::Display + Send + Sync {
     /// Get the ISA-independent flags that were used to make this trait object.
     fn flags(&self) -> &settings::Flags;
 
+    /// Hashes all flags, both ISA-independent and ISA-specific, into the
+    /// specified hasher.
+    fn hash_all_flags(&self, hasher: &mut dyn Hasher);
+
     /// Get the default calling convention of this target.
     fn default_call_conv(&self) -> CallConv {
         CallConv::triple_default(self.triple())
+    }
+
+    /// Get the endianness of this ISA.
+    fn endianness(&self) -> ir::Endianness {
+        match self.triple().endianness().unwrap() {
+            target_lexicon::Endianness::Little => ir::Endianness::Little,
+            target_lexicon::Endianness::Big => ir::Endianness::Big,
+        }
     }
 
     /// Get the pointer type of this ISA.
@@ -279,6 +326,12 @@ pub trait TargetIsa: fmt::Display + Send + Sync {
     #[cfg(feature = "unwind")]
     /// Map a Cranelift register to its corresponding DWARF register.
     fn map_dwarf_register(&self, _: RegUnit) -> Result<u16, RegisterMappingError> {
+        Err(RegisterMappingError::UnsupportedArchitecture)
+    }
+
+    #[cfg(feature = "unwind")]
+    /// Map a regalloc::Reg to its corresponding DWARF register.
+    fn map_regalloc_reg_to_dwarf(&self, _: ::regalloc::Reg) -> Result<u16, RegisterMappingError> {
         Err(RegisterMappingError::UnsupportedArchitecture)
     }
 

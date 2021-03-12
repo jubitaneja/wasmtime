@@ -2,33 +2,13 @@
 
 use crate::tunables::Tunables;
 use crate::WASM_MAX_PAGES;
+use cranelift_codegen::ir;
 use cranelift_entity::{EntityRef, PrimaryMap};
-use cranelift_wasm::{
-    DataIndex, DefinedFuncIndex, DefinedGlobalIndex, DefinedMemoryIndex, DefinedTableIndex,
-    ElemIndex, EntityIndex, EntityType, FuncIndex, Global, GlobalIndex, InstanceIndex, Memory,
-    MemoryIndex, ModuleIndex, SignatureIndex, Table, TableIndex, TypeIndex, WasmFuncType,
-};
+use cranelift_wasm::*;
 use indexmap::IndexMap;
-use more_asserts::assert_ge;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering::SeqCst},
-    Arc,
-};
-
-/// A WebAssembly table initializer.
-#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
-pub struct TableElements {
-    /// The index of a table to initialize.
-    pub table_index: TableIndex,
-    /// Optionally, a global variable giving a base index.
-    pub base: Option<GlobalIndex>,
-    /// The offset to add to the base.
-    pub offset: usize,
-    /// The values to write into the table elements.
-    pub elements: Box<[FuncIndex]>,
-}
+use std::sync::Arc;
 
 /// Implemenation styles for WebAssembly linear memory.
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
@@ -48,10 +28,20 @@ impl MemoryStyle {
         // A heap with a maximum that doesn't exceed the static memory bound specified by the
         // tunables make it static.
         //
-        // If the module doesn't declare an explicit maximum treat it as 4GiB.
-        let maximum = memory.maximum.unwrap_or(WASM_MAX_PAGES);
-        if maximum <= tunables.static_memory_bound {
-            assert_ge!(tunables.static_memory_bound, memory.minimum);
+        // If the module doesn't declare an explicit maximum treat it as 4GiB when not
+        // requested to use the static memory bound itself as the maximum.
+        let maximum = std::cmp::min(
+            memory.maximum.unwrap_or(WASM_MAX_PAGES),
+            if tunables.static_memory_bound_is_maximum {
+                std::cmp::min(tunables.static_memory_bound, WASM_MAX_PAGES)
+            } else {
+                WASM_MAX_PAGES
+            },
+        );
+
+        // Ensure the minimum is less than the maximum; the minimum might exceed the maximum
+        // when the memory is artificially bounded via `static_memory_bound_is_maximum` above
+        if memory.minimum <= maximum && maximum <= tunables.static_memory_bound {
             return (
                 Self::Static {
                     bound: tunables.static_memory_bound,
@@ -89,7 +79,157 @@ impl MemoryPlan {
     }
 }
 
-/// Implemenation styles for WebAssembly tables.
+/// A WebAssembly linear memory initializer.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MemoryInitializer {
+    /// The index of a linear memory to initialize.
+    pub memory_index: MemoryIndex,
+    /// Optionally, a global variable giving a base index.
+    pub base: Option<GlobalIndex>,
+    /// The offset to add to the base.
+    pub offset: usize,
+    /// The data to write into the linear memory.
+    pub data: Box<[u8]>,
+}
+
+/// The type of WebAssembly linear memory initialization to use for a module.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum MemoryInitialization {
+    /// Memory initialization is segmented.
+    ///
+    /// Segmented initialization can be used for any module, but it is required if:
+    ///
+    /// * A data segment referenced an imported memory.
+    /// * A data segment uses a global base.
+    ///
+    /// Segmented initialization is performed by processing the complete set of data segments
+    /// when the module is instantiated.
+    ///
+    /// This is the default memory initialization type.
+    Segmented(Vec<MemoryInitializer>),
+    /// Memory initialization is paged.
+    ///
+    /// To be paged, the following requirements must be met:
+    ///
+    /// * All data segments must reference defined memories.
+    /// * All data segments must not use a global base.
+    ///
+    /// Paged initialization is performed by copying (or mapping) entire WebAssembly pages to each linear memory.
+    ///
+    /// The `uffd` feature makes use of this type of memory initialization because it can instruct the kernel
+    /// to back an entire WebAssembly page from an existing set of in-memory pages.
+    ///
+    /// By processing the data segments at module compilation time, the uffd fault handler doesn't have to do
+    /// any work to point the kernel at the right linear memory page to use.
+    Paged {
+        /// The map of defined memory index to a list of initialization pages.
+        /// The list of page data is sparse, with None representing a zero page.
+        /// Each page of initialization data is WebAssembly page-sized (64 KiB).
+        /// The size of the list will be the maximum page written to by a data segment.
+        map: PrimaryMap<DefinedMemoryIndex, Vec<Option<Box<[u8]>>>>,
+        /// Whether or not an out-of-bounds data segment was observed.
+        /// This is used to fail module instantiation after the pages are initialized.
+        out_of_bounds: bool,
+    },
+}
+
+impl MemoryInitialization {
+    /// Attempts to convert segmented memory initialization into paged initialization for the given module.
+    ///
+    /// Returns `None` if the initialization cannot be paged or if it is already paged.
+    pub fn to_paged(&self, module: &Module) -> Option<Self> {
+        const WASM_PAGE_SIZE: usize = crate::WASM_PAGE_SIZE as usize;
+
+        match self {
+            Self::Paged { .. } => None,
+            Self::Segmented(initializers) => {
+                let num_defined_memories = module.memory_plans.len() - module.num_imported_memories;
+                let mut out_of_bounds = false;
+                let mut map = PrimaryMap::with_capacity(num_defined_memories);
+
+                for _ in 0..num_defined_memories {
+                    map.push(Vec::new());
+                }
+
+                for initializer in initializers {
+                    match (
+                        module.defined_memory_index(initializer.memory_index),
+                        initializer.base.is_some(),
+                    ) {
+                        (None, _) | (_, true) => {
+                            // If the initializer references an imported memory or uses a global base,
+                            // the complete set of segments will need to be processed at module instantiation
+                            return None;
+                        }
+                        (Some(index), false) => {
+                            if out_of_bounds {
+                                continue;
+                            }
+
+                            // Perform a bounds check on the segment
+                            // As this segment is referencing a defined memory without a global base, the last byte
+                            // written to by the segment cannot exceed the memory's initial minimum size
+                            if (initializer.offset + initializer.data.len())
+                                > ((module.memory_plans[initializer.memory_index].memory.minimum
+                                    as usize)
+                                    * WASM_PAGE_SIZE)
+                            {
+                                out_of_bounds = true;
+                                continue;
+                            }
+
+                            let pages = &mut map[index];
+                            let mut page_index = initializer.offset / WASM_PAGE_SIZE;
+                            let mut page_offset = initializer.offset % WASM_PAGE_SIZE;
+                            let mut data_offset = 0;
+                            let mut data_remaining = initializer.data.len();
+
+                            if data_remaining == 0 {
+                                continue;
+                            }
+
+                            // Copy the initialization data by each WebAssembly-sized page (64 KiB)
+                            loop {
+                                if page_index >= pages.len() {
+                                    pages.resize(page_index + 1, None);
+                                }
+
+                                let page = pages[page_index].get_or_insert_with(|| {
+                                    vec![0; WASM_PAGE_SIZE].into_boxed_slice()
+                                });
+                                let len =
+                                    std::cmp::min(data_remaining, WASM_PAGE_SIZE - page_offset);
+
+                                page[page_offset..page_offset + len].copy_from_slice(
+                                    &initializer.data[data_offset..(data_offset + len)],
+                                );
+
+                                if len == data_remaining {
+                                    break;
+                                }
+
+                                page_index += 1;
+                                page_offset = 0;
+                                data_offset += len;
+                                data_remaining -= len;
+                            }
+                        }
+                    };
+                }
+
+                Some(Self::Paged { map, out_of_bounds })
+            }
+        }
+    }
+}
+
+impl Default for MemoryInitialization {
+    fn default() -> Self {
+        Self::Segmented(Vec::new())
+    }
+}
+
+/// Implementation styles for WebAssembly tables.
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum TableStyle {
     /// Signatures are stored in the table and checked in the caller.
@@ -121,23 +261,29 @@ impl TablePlan {
     }
 }
 
-/// Different types that can appear in a module
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A WebAssembly table initializer.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TableInitializer {
+    /// The index of a table to initialize.
+    pub table_index: TableIndex,
+    /// Optionally, a global variable giving a base index.
+    pub base: Option<GlobalIndex>,
+    /// The offset to add to the base.
+    pub offset: usize,
+    /// The values to write into the table elements.
+    pub elements: Box<[FuncIndex]>,
+}
+
+/// Different types that can appear in a module.
+///
+/// Note that each of these variants are intended to index further into a
+/// separate table.
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub enum ModuleType {
-    /// A function type, indexed further into the `signatures` table.
     Function(SignatureIndex),
-    /// A module type
-    Module {
-        /// The module's imports
-        imports: Vec<(String, Option<String>, EntityType)>,
-        /// The module's exports
-        exports: Vec<(String, EntityType)>,
-    },
-    /// An instance type
-    Instance {
-        /// the instance's exports
-        exports: Vec<(String, EntityType)>,
-    },
+    Module(ModuleTypeIndex),
+    Instance(InstanceTypeIndex),
 }
 
 impl ModuleType {
@@ -153,17 +299,13 @@ impl ModuleType {
 
 /// A translated WebAssembly module, excluding the function bodies and
 /// memory initializers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Module {
-    /// A unique identifier (within this process) for this module.
-    #[serde(skip_serializing, skip_deserializing, default = "Module::next_id")]
-    pub id: usize,
-
     /// The name of this wasm module, often found in the wasm file.
     pub name: Option<String>,
 
     /// All import records, in the order they are declared in the module.
-    pub imports: Vec<(String, Option<String>, EntityIndex)>,
+    pub initializers: Vec<Initializer>,
 
     /// Exported entities.
     pub exports: IndexMap<String, EntityIndex>,
@@ -172,34 +314,40 @@ pub struct Module {
     pub start_func: Option<FuncIndex>,
 
     /// WebAssembly table initializers.
-    pub table_elements: Vec<TableElements>,
+    pub table_initializers: Vec<TableInitializer>,
+
+    /// WebAssembly linear memory initializer.
+    pub memory_initialization: MemoryInitialization,
 
     /// WebAssembly passive elements.
-    pub passive_elements: HashMap<ElemIndex, Box<[FuncIndex]>>,
+    pub passive_elements: Vec<Box<[FuncIndex]>>,
+
+    /// The map from passive element index (element segment index space) to index in `passive_elements`.
+    pub passive_elements_map: HashMap<ElemIndex, usize>,
 
     /// WebAssembly passive data segments.
     #[serde(with = "passive_data_serde")]
-    pub passive_data: HashMap<DataIndex, Arc<[u8]>>,
+    pub passive_data: Vec<Arc<[u8]>>,
 
-    /// WebAssembly table initializers.
+    /// The map from passive data index (data segment index space) to index in `passive_data`.
+    pub passive_data_map: HashMap<DataIndex, usize>,
+
+    /// WebAssembly function names.
     pub func_names: HashMap<FuncIndex, String>,
-
-    /// Unprocessed signatures exactly as provided by `declare_signature()`.
-    pub signatures: PrimaryMap<SignatureIndex, WasmFuncType>,
 
     /// Types declared in the wasm module.
     pub types: PrimaryMap<TypeIndex, ModuleType>,
 
-    /// Number of imported functions in the module.
+    /// Number of imported or aliased functions in the module.
     pub num_imported_funcs: usize,
 
-    /// Number of imported tables in the module.
+    /// Number of imported or aliased tables in the module.
     pub num_imported_tables: usize,
 
-    /// Number of imported memories in the module.
+    /// Number of imported or aliased memories in the module.
     pub num_imported_memories: usize,
 
-    /// Number of imported globals in the module.
+    /// Number of imported or aliased globals in the module.
     pub num_imported_globals: usize,
 
     /// Types of functions, imported and local.
@@ -214,64 +362,86 @@ pub struct Module {
     /// WebAssembly global variables.
     pub globals: PrimaryMap<GlobalIndex, Global>,
 
-    /// WebAssembly instances.
-    pub instances: PrimaryMap<InstanceIndex, Instance>,
+    /// The type of each wasm instance this module defines.
+    pub instances: PrimaryMap<InstanceIndex, InstanceTypeIndex>,
 
-    /// WebAssembly modules.
-    pub modules: PrimaryMap<ModuleIndex, TypeIndex>,
+    /// The type of each nested wasm module this module contains.
+    pub modules: PrimaryMap<ModuleIndex, ModuleTypeIndex>,
 }
 
-/// Different forms an instance can take in a wasm module
+/// Initialization routines for creating an instance, encompassing imports,
+/// modules, instances, aliases, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Instance {
-    /// This is an imported instance with the specified type
-    Import(TypeIndex),
-    /// This is a locally created instance which instantiates the specified
-    /// module with the given list of entities.
+pub enum Initializer {
+    /// An imported item is required to be provided.
+    Import {
+        /// Name of this import
+        name: String,
+        /// The field name projection of this import. When module-linking is
+        /// enabled this is always `None`. Otherwise this is always `Some`.
+        field: Option<String>,
+        /// Where this import will be placed, which also has type information
+        /// about the import.
+        index: EntityIndex,
+    },
+
+    /// An export from a previously defined instance is being inserted into our
+    /// index space.
+    ///
+    /// Note that when the module linking proposal is enabled two-level imports
+    /// will implicitly desugar to this initializer.
+    AliasInstanceExport {
+        /// The instance that we're referencing.
+        instance: InstanceIndex,
+        /// Which export is being inserted into our index space.
+        export: String,
+    },
+
+    /// A module is being instantiated with previously configured initializers
+    /// as arguments.
     Instantiate {
         /// The module that this instance is instantiating.
         module: ModuleIndex,
-        /// The arguments provided to instantiation.
-        args: Vec<EntityIndex>,
+        /// The arguments provided to instantiation, along with their name in
+        /// the instance being instantiated.
+        args: IndexMap<String, EntityIndex>,
     },
+
+    /// A module is being created from a set of compiled artifacts.
+    CreateModule {
+        /// The index of the artifact that's being converted into a module.
+        artifact_index: usize,
+        /// The list of artifacts that this module value will be inheriting.
+        artifacts: Vec<usize>,
+        /// The list of modules that this module value will inherit.
+        modules: Vec<ModuleUpvar>,
+    },
+
+    /// A module is created from a closed-over-module value, defined when this
+    /// module was created.
+    DefineModule(usize),
+}
+
+/// Where module values can come from when creating a new module from a compiled
+/// artifact.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ModuleUpvar {
+    /// A module value is inherited from the module creating the new module.
+    Inherit(usize),
+    /// A module value comes from the instance-to-be-created module index space.
+    Local(ModuleIndex),
 }
 
 impl Module {
     /// Allocates the module data structures.
     pub fn new() -> Self {
-        Self {
-            id: Self::next_id(),
-            name: None,
-            imports: Vec::new(),
-            exports: IndexMap::new(),
-            start_func: None,
-            table_elements: Vec::new(),
-            passive_elements: HashMap::new(),
-            passive_data: HashMap::new(),
-            func_names: HashMap::new(),
-            num_imported_funcs: 0,
-            num_imported_tables: 0,
-            num_imported_memories: 0,
-            num_imported_globals: 0,
-            signatures: PrimaryMap::new(),
-            functions: PrimaryMap::new(),
-            table_plans: PrimaryMap::new(),
-            memory_plans: PrimaryMap::new(),
-            globals: PrimaryMap::new(),
-            instances: PrimaryMap::new(),
-            modules: PrimaryMap::new(),
-            types: PrimaryMap::new(),
-        }
+        Module::default()
     }
 
     /// Get the given passive element, if it exists.
     pub fn get_passive_element(&self, index: ElemIndex) -> Option<&[FuncIndex]> {
-        self.passive_elements.get(&index).map(|es| &**es)
-    }
-
-    fn next_id() -> usize {
-        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-        NEXT_ID.fetch_add(1, SeqCst)
+        let index = *self.passive_elements_map.get(&index)?;
+        Some(self.passive_elements[index].as_ref())
     }
 
     /// Convert a `DefinedFuncIndex` into a `FuncIndex`.
@@ -362,61 +532,101 @@ impl Module {
         index.index() < self.num_imported_globals
     }
 
-    /// Convenience method for looking up the original Wasm signature of a
-    /// function.
-    pub fn wasm_func_type(&self, func_index: FuncIndex) -> &WasmFuncType {
-        &self.signatures[self.functions[func_index]]
+    /// Returns an iterator of all the imports in this module, along with their
+    /// module name, field name, and type that's being imported.
+    pub fn imports(&self) -> impl Iterator<Item = (&str, Option<&str>, EntityType)> {
+        self.initializers.iter().filter_map(move |i| match i {
+            Initializer::Import { name, field, index } => {
+                Some((name.as_str(), field.as_deref(), self.type_of(*index)))
+            }
+            _ => None,
+        })
+    }
+
+    /// Returns the type of an item based on its index
+    pub fn type_of(&self, index: EntityIndex) -> EntityType {
+        match index {
+            EntityIndex::Global(i) => EntityType::Global(self.globals[i]),
+            EntityIndex::Table(i) => EntityType::Table(self.table_plans[i].table),
+            EntityIndex::Memory(i) => EntityType::Memory(self.memory_plans[i].memory),
+            EntityIndex::Function(i) => EntityType::Function(self.functions[i]),
+            EntityIndex::Instance(i) => EntityType::Instance(self.instances[i]),
+            EntityIndex::Module(i) => EntityType::Module(self.modules[i]),
+        }
     }
 }
 
-impl Default for Module {
-    fn default() -> Module {
-        Module::new()
-    }
+/// All types which are recorded for the entirety of a translation.
+///
+/// Note that this is shared amongst all modules coming out of a translation
+/// in the case of nested modules and the module linking proposal.
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct TypeTables {
+    pub wasm_signatures: PrimaryMap<SignatureIndex, WasmFuncType>,
+    pub native_signatures: PrimaryMap<SignatureIndex, ir::Signature>,
+    pub module_signatures: PrimaryMap<ModuleTypeIndex, ModuleSignature>,
+    pub instance_signatures: PrimaryMap<InstanceTypeIndex, InstanceSignature>,
+}
+
+/// The type signature of known modules.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleSignature {
+    /// All imports in this module, listed in order with their name and
+    /// what type they're importing.
+    pub imports: IndexMap<String, EntityType>,
+    /// Exports are what an instance type conveys, so we go through an
+    /// indirection over there.
+    pub exports: InstanceTypeIndex,
+}
+
+/// The type signature of known instances.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct InstanceSignature {
+    /// The name of what's being exported as well as its type signature.
+    pub exports: IndexMap<String, EntityType>,
 }
 
 mod passive_data_serde {
-    use super::{Arc, DataIndex, HashMap};
-    use serde::{de::MapAccess, de::Visitor, ser::SerializeMap, Deserializer, Serializer};
+    use super::Arc;
+    use serde::{de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserializer, Serializer};
     use std::fmt;
 
-    pub(super) fn serialize<S>(
-        data: &HashMap<DataIndex, Arc<[u8]>>,
-        ser: S,
-    ) -> Result<S::Ok, S::Error>
+    pub(super) fn serialize<S>(data: &Vec<Arc<[u8]>>, ser: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut map = ser.serialize_map(Some(data.len()))?;
-        for (k, v) in data {
-            map.serialize_entry(k, v.as_ref())?;
+        let mut seq = ser.serialize_seq(Some(data.len()))?;
+        for v in data {
+            seq.serialize_element(v.as_ref())?;
         }
-        map.end()
+        seq.end()
     }
 
     struct PassiveDataVisitor;
     impl<'de> Visitor<'de> for PassiveDataVisitor {
-        type Value = HashMap<DataIndex, Arc<[u8]>>;
+        type Value = Vec<Arc<[u8]>>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a passive_data map")
+            formatter.write_str("a passive data sequence")
         }
-        fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+
+        fn visit_seq<M>(self, mut access: M) -> Result<Self::Value, M::Error>
         where
-            M: MapAccess<'de>,
+            M: SeqAccess<'de>,
         {
-            let mut map = HashMap::with_capacity(access.size_hint().unwrap_or(0));
-            while let Some((key, value)) = access.next_entry::<_, Vec<u8>>()? {
-                map.insert(key, value.into());
+            let mut data = Vec::with_capacity(access.size_hint().unwrap_or(0));
+            while let Some(value) = access.next_element::<Vec<u8>>()? {
+                data.push(value.into());
             }
-            Ok(map)
+            Ok(data)
         }
     }
 
-    pub(super) fn deserialize<'de, D>(de: D) -> Result<HashMap<DataIndex, Arc<[u8]>>, D::Error>
+    pub(super) fn deserialize<'de, D>(de: D) -> Result<Vec<Arc<[u8]>>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        de.deserialize_map(PassiveDataVisitor)
+        de.deserialize_seq(PassiveDataVisitor)
     }
 }

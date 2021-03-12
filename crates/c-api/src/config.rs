@@ -56,8 +56,13 @@ pub extern "C" fn wasmtime_config_interruptable_set(c: &mut wasm_config_t, enabl
 }
 
 #[no_mangle]
-pub extern "C" fn wasmtime_config_max_wasm_stack_set(c: &mut wasm_config_t, size: usize) {
-    c.config.max_wasm_stack(size);
+pub extern "C" fn wasmtime_config_consume_fuel_set(c: &mut wasm_config_t, enable: bool) {
+    c.config.consume_fuel(enable);
+}
+
+#[no_mangle]
+pub extern "C" fn wasmtime_config_max_wasm_stack_set(c: &mut wasm_config_t, size: usize) -> bool {
+    c.config.max_wasm_stack(size).is_ok()
 }
 
 #[no_mangle]
@@ -83,6 +88,11 @@ pub extern "C" fn wasmtime_config_wasm_bulk_memory_set(c: &mut wasm_config_t, en
 #[no_mangle]
 pub extern "C" fn wasmtime_config_wasm_multi_value_set(c: &mut wasm_config_t, enable: bool) {
     c.config.wasm_multi_value(enable);
+}
+
+#[no_mangle]
+pub extern "C" fn wasmtime_config_wasm_module_linking_set(c: &mut wasm_config_t, enable: bool) {
+    c.config.wasm_module_linking(enable);
 }
 
 #[no_mangle]
@@ -165,4 +175,9 @@ pub extern "C" fn wasmtime_config_static_memory_guard_size_set(c: &mut wasm_conf
 #[no_mangle]
 pub extern "C" fn wasmtime_config_dynamic_memory_guard_size_set(c: &mut wasm_config_t, size: u64) {
     c.config.dynamic_memory_guard_size(size);
+}
+
+#[no_mangle]
+pub extern "C" fn wasmtime_config_max_instances_set(c: &mut wasm_config_t, limit: usize) {
+    c.config.max_instances(limit);
 }

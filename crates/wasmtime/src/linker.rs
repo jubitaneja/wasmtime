@@ -1,3 +1,4 @@
+use crate::instance::InstanceBuilder;
 use crate::{
     Extern, ExternType, Func, FuncType, GlobalType, ImportType, Instance, IntoFunc, Module, Store,
     Trap,
@@ -58,6 +59,8 @@ enum ImportKind {
     Global(GlobalType),
     Memory,
     Table,
+    Module,
+    Instance,
 }
 
 impl Linker {
@@ -352,10 +355,10 @@ impl Linker {
     /// "#;
     /// let module = Module::new(store.engine(), wat)?;
     /// linker.module("commander", &module)?;
-    /// let run = linker.get_default("")?.get0::<()>()?;
-    /// run()?;
-    /// run()?;
-    /// run()?;
+    /// let run = linker.get_default("")?.typed::<(), ()>()?.clone();
+    /// run.call(())?;
+    /// run.call(())?;
+    /// run.call(())?;
     ///
     /// let wat = r#"
     ///     (module
@@ -371,7 +374,8 @@ impl Linker {
     /// "#;
     /// let module = Module::new(store.engine(), wat)?;
     /// linker.module("", &module)?;
-    /// let count = linker.get_one_by_name("", Some("run"))?.into_func().unwrap().get0::<i32>()?()?;
+    /// let run = linker.get_one_by_name("", Some("run"))?.into_func().unwrap();
+    /// let count = run.typed::<(), i32>()?.call(())?;
     /// assert_eq!(count, 0, "a Command should get a fresh instance on each invocation");
     ///
     /// # Ok(())
@@ -385,8 +389,8 @@ impl Linker {
 
                 if let Some(export) = instance.get_export("_initialize") {
                     if let Extern::Func(func) = export {
-                        func.get0::<()>()
-                            .and_then(|f| f().map_err(Into::into))
+                        func.typed::<(), ()>()
+                            .and_then(|f| f.call(()).map_err(Into::into))
                             .context("calling the Reactor initialization function")?;
                     }
                 }
@@ -399,34 +403,53 @@ impl Linker {
     fn command(&mut self, module_name: &str, module: &Module) -> Result<&mut Self> {
         for export in module.exports() {
             if let Some(func_ty) = export.ty().func() {
-                let imports = self.compute_imports(module)?;
-                let store = self.store.clone();
+                let imports = self
+                    .compute_imports(module)?
+                    .into_iter()
+                    .map(|e| e.wasmtime_export())
+                    .collect::<Vec<_>>();
                 let module = module.clone();
                 let export_name = export.name().to_owned();
-                let func = Func::new(&self.store, func_ty.clone(), move |_, params, results| {
-                    // Create a new instance for this command execution.
-                    let instance = Instance::new(&store, &module, &imports)?;
+                let func = Func::new(
+                    &self.store,
+                    func_ty.clone(),
+                    move |caller, params, results| {
+                        let store = caller.store();
 
-                    // `unwrap()` everything here because we know the instance contains a
-                    // function export with the given name and signature because we're
-                    // iterating over the module it was instantiated from.
-                    let command_results = instance
-                        .get_export(&export_name)
-                        .unwrap()
-                        .into_func()
-                        .unwrap()
-                        .call(params)
-                        .map_err(|error| error.downcast::<Trap>().unwrap())?;
+                        // Note that the unsafety here is due to the validity of
+                        // `i` and the validity of `i` within `store`. For our
+                        // case though these items all come from `imports` above
+                        // so they're all valid. They're also all kept alive by
+                        // the store itself used here so this should be safe.
+                        let imports = imports
+                            .iter()
+                            .map(|i| unsafe { Extern::from_wasmtime_export(&i, &store) })
+                            .collect::<Vec<_>>();
 
-                    // Copy the return values into the output slice.
-                    for (result, command_result) in
-                        results.iter_mut().zip(command_results.into_vec())
-                    {
-                        *result = command_result;
-                    }
+                        // Create a new instance for this command execution.
+                        let instance = Instance::new(&store, &module, &imports)?;
 
-                    Ok(())
-                });
+                        // `unwrap()` everything here because we know the instance contains a
+                        // function export with the given name and signature because we're
+                        // iterating over the module it was instantiated from.
+                        let command_results = instance
+                            .get_export(&export_name)
+                            .unwrap()
+                            .into_func()
+                            .unwrap()
+                            .call(params)
+                            .map_err(|error| error.downcast::<Trap>().unwrap())?;
+
+                        // Copy the return values into the output slice.
+                        for (result, command_result) in
+                            results.iter_mut().zip(command_results.into_vec())
+                        {
+                            *result = command_result;
+                        }
+
+                        Ok(())
+                    },
+                );
                 self.insert(module_name, export.name(), func.into())?;
             } else if export.name() == "memory" && export.ty().memory().is_some() {
                 // Allow an exported "memory" memory for now.
@@ -496,6 +519,19 @@ impl Linker {
                 o.insert(item);
             }
             Entry::Vacant(v) => {
+                // If shadowing is not allowed, check for an existing host function
+                if !self.allow_shadowing {
+                    if let Extern::Func(_) = &item {
+                        if self.store.get_host_func(module, name).is_some() {
+                            bail!(
+                                "import of `{}::{}` with kind {:?} defined twice",
+                                module,
+                                name,
+                                v.key().kind,
+                            )
+                        }
+                    }
+                }
                 v.insert(item);
             }
         }
@@ -516,10 +552,8 @@ impl Linker {
             ExternType::Global(f) => ImportKind::Global(f),
             ExternType::Memory(_) => ImportKind::Memory,
             ExternType::Table(_) => ImportKind::Table,
-
-            // FIXME(#2094)
-            ExternType::Module(_) => unimplemented!(),
-            ExternType::Instance(_) => unimplemented!(),
+            ExternType::Module(_) => ImportKind::Module,
+            ExternType::Instance(_) => ImportKind::Instance,
         }
     }
 
@@ -579,6 +613,16 @@ impl Linker {
         let imports = self.compute_imports(module)?;
 
         Instance::new(&self.store, module, &imports)
+    }
+
+    /// Attempts to instantiate the `module` provided. This is the same as [`Linker::instantiate`],
+    /// except for async `Store`s.
+    #[cfg(feature = "async")]
+    #[cfg_attr(nightlydoc, doc(cfg(feature = "async")))]
+    pub async fn instantiate_async(&self, module: &Module) -> Result<Instance> {
+        let imports = self.compute_imports(module)?;
+
+        Instance::new_async(&self.store, module, &imports).await
     }
 
     fn compute_imports(&self, module: &Module) -> Result<Vec<Extern>> {
@@ -646,15 +690,45 @@ impl Linker {
     ///
     /// Returns `None` if no match was found.
     pub fn get(&self, import: &ImportType) -> Option<Extern> {
-        let key = ImportKey {
-            module: *self.string2idx.get(import.module())?,
-            name: match import.name() {
-                Some(name) => *self.string2idx.get(name)?,
-                None => usize::max_value(),
-            },
-            kind: self.import_kind(import.ty()),
-        };
-        self.map.get(&key).cloned()
+        if let Some(ext) = self.get_extern(import) {
+            return Some(ext);
+        }
+
+        match import.ty() {
+            // For function imports, check with the store for a host func
+            ExternType::Func(_) => self
+                .store
+                .get_host_func(import.module(), import.name()?)
+                .map(Into::into),
+            ExternType::Instance(t) => {
+                // This is a key location where the module linking proposal is
+                // implemented. This logic allows single-level imports of an instance to
+                // get satisfied by multiple definitions of items within this `Linker`.
+                //
+                // The instance being import is iterated over to load the names from
+                // this `Linker` (recursively calling `get`). If anything isn't defined
+                // we return `None` since the entire value isn't defined. Otherwise when
+                // all values are loaded it's assembled into an `Instance` and
+                // returned`.
+                //
+                // Note that this isn't exactly the speediest implementation in the
+                // world. Ideally we would pre-create the `Instance` instead of creating
+                // it each time a module is instantiated. For now though while the
+                // module linking proposal is under development this should hopefully
+                // suffice.
+                if import.name().is_none() {
+                    let mut builder = InstanceBuilder::new();
+                    for export in t.exports() {
+                        let item = self.get(&export.as_import(import.module()))?;
+                        builder.insert(export.name(), item);
+                    }
+                    Some(builder.finish(&self.store).into())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Returns all items defined for the `module` and `name` pair.
@@ -730,6 +804,18 @@ impl Linker {
             FuncType::new(None, None),
             move |_, _, _| Ok(()),
         ))
+    }
+
+    fn get_extern(&self, import: &ImportType) -> Option<Extern> {
+        let key = ImportKey {
+            module: *self.string2idx.get(import.module())?,
+            name: match import.name() {
+                Some(name) => *self.string2idx.get(name)?,
+                None => usize::max_value(),
+            },
+            kind: self.import_kind(import.ty()),
+        };
+        self.map.get(&key).cloned()
     }
 }
 

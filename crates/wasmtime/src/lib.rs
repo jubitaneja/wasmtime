@@ -47,15 +47,12 @@
 //!
 //!     // Instantiation of a module requires specifying its imports and then
 //!     // afterwards we can fetch exports by name, as well as asserting the
-//!     // type signature of the function with `get0`.
+//!     // type signature of the function with `get_typed_func`.
 //!     let instance = Instance::new(&store, &module, &[host_hello.into()])?;
-//!     let hello = instance
-//!         .get_func("hello")
-//!         .ok_or(anyhow::format_err!("failed to find `hello` function export"))?
-//!         .get0::<()>()?;
+//!     let hello = instance.get_typed_func::<(), ()>("hello")?;
 //!
 //!     // And finally we can call the wasm as if it were a Rust function!
-//!     hello()?;
+//!     hello.call(())?;
 //!
 //!     Ok(())
 //! }
@@ -140,6 +137,44 @@
 //! create a "wasi instance" and then add all of its items into a [`Linker`],
 //! which can then be used to instantiate a [`Module`] that uses WASI.
 //!
+//! ## Crate Features
+//!
+//! The `wasmtime` crate comes with a number of compile-time features that can
+//! be used to customize what features it supports. Some of these features are
+//! just internal details, but some affect the public API of the `wasmtime`
+//! crate. Be sure to check the API you're using to see if any crate features
+//! are enabled.
+//!
+//! * `cache` - Enabled by default, this feature adds support for wasmtime to
+//!   perform internal caching of modules in a global location. This must still
+//!   be enabled explicitly through [`Config::cache_config_load`] or
+//!   [`Config::cache_config_load_default`].
+//!
+//! * `wat` - Enabled by default, this feature adds support for accepting the
+//!   text format of WebAssembly in [`Module::new`]. The text format will be
+//!   automatically recognized and translated to binary when compiling a
+//!   module.
+//!
+//! * `parallel-compilation` - Enabled by default, this feature enables support
+//!   for compiling functions of a module in parallel with `rayon`.
+//!
+//! * `async` - Enabled by default, this feature enables APIs and runtime
+//!   support for defining asynchronous host functions and calling WebAssembly
+//!   asynchronously.
+//!
+//! * `jitdump` - Enabled by default, this feature compiles in support for the
+//!   jitdump runtime profilng format. The profiler can be selected with
+//!   [`Config::profiler`].
+//!
+//! * `vtune` - Not enabled by default, this feature compiles in support for
+//!   supporting VTune profiling of JIT code.
+//!
+//! * `uffd` - Not enabled by default. This feature enables `userfaultfd` support
+//!   when using the pooling instance allocator. As handling page faults in user space
+//!   comes with a performance penalty, this feature should only be enabled when kernel
+//!   lock contention is hampering multithreading throughput. This feature is only
+//!   supported on Linux and requires a Linux kernel version 4.11 or higher.
+//!
 //! ## Examples
 //!
 //! In addition to the examples below be sure to check out the [online embedding
@@ -153,7 +188,8 @@
 //! ```no_run
 //! # use anyhow::Result;
 //! # use wasmtime::*;
-//! use wasmtime_wasi::{Wasi, WasiCtx};
+//! use wasmtime_wasi::Wasi;
+//! use wasi_cap_std_sync::WasiCtxBuilder;
 //!
 //! # fn main() -> Result<()> {
 //! let store = Store::default();
@@ -162,7 +198,7 @@
 //! // Create an instance of `Wasi` which contains a `WasiCtx`. Note that
 //! // `WasiCtx` provides a number of ways to configure what the target program
 //! // will have access to.
-//! let wasi = Wasi::new(&store, WasiCtx::new(std::env::args())?);
+//! let wasi = Wasi::new(&store, WasiCtxBuilder::new().inherit_stdio().build()?);
 //! wasi.add_to_linker(&mut linker)?;
 //!
 //! // Instantiate our module with the imports we've created, and run it.
@@ -223,8 +259,8 @@
 //!     "#,
 //! )?;
 //! let instance = Instance::new(&store, &module, &[log_str.into()])?;
-//! let foo = instance.get_func("foo").unwrap().get0::<()>()?;
-//! foo()?;
+//! let foo = instance.get_typed_func::<(), ()>("foo")?;
+//! foo.call(())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -233,14 +269,19 @@
 #![deny(missing_docs, broken_intra_doc_links)]
 #![doc(test(attr(deny(warnings))))]
 #![doc(test(attr(allow(dead_code, unused_variables, unused_mut))))]
+#![cfg_attr(nightlydoc, feature(doc_cfg))]
+#![cfg_attr(not(feature = "default"), allow(dead_code, unused_imports))]
+
+#[macro_use]
+mod func;
 
 mod config;
 mod engine;
 mod externals;
 mod frame_info;
-mod func;
 mod instance;
 mod linker;
+mod memory;
 mod module;
 mod r#ref;
 mod sig_registry;
@@ -253,10 +294,11 @@ mod values;
 pub use crate::config::*;
 pub use crate::engine::*;
 pub use crate::externals::*;
-pub use crate::frame_info::FrameInfo;
+pub use crate::frame_info::{FrameInfo, FrameSymbol};
 pub use crate::func::*;
 pub use crate::instance::Instance;
 pub use crate::linker::*;
+pub use crate::memory::*;
 pub use crate::module::Module;
 pub use crate::r#ref::ExternRef;
 pub use crate::store::*;

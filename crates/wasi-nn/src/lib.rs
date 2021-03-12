@@ -18,9 +18,6 @@ wasmtime_wiggle::wasmtime_integration!({
         wasi_ephemeral_nn => {
           name: WasiNn,
           docs: "An instantiated instance of the wasi-nn exports.",
-          function_override: {}
         }
     },
-    // Error to return when caller module is missing memory export:
-    missing_memory: { witx::types::Errno::MissingMemory },
 });

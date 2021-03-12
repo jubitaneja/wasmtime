@@ -1,15 +1,18 @@
-use super::create_handle::create_handle;
-use crate::trampoline::StoreInstanceHandle;
+use crate::trampoline::{create_handle, StoreInstanceHandle};
 use crate::{GlobalType, Mutability, Store, Val};
 use anyhow::Result;
 use wasmtime_environ::entity::PrimaryMap;
-use wasmtime_environ::{wasm, Module};
+use wasmtime_environ::{
+    wasm::{self, SignatureIndex},
+    Module, ModuleType,
+};
 use wasmtime_runtime::VMFunctionImport;
 
 pub fn create_global(store: &Store, gt: &GlobalType, val: Val) -> Result<StoreInstanceHandle> {
     let mut module = Module::new();
     let mut func_imports = Vec::new();
     let mut externref_init = None;
+    let mut shared_signature_id = None;
 
     let global = wasm::Global {
         wasm_ty: gt.content().to_wasm_type(),
@@ -35,17 +38,19 @@ pub fn create_global(store: &Store, gt: &GlobalType, val: Val) -> Result<StoreIn
             Val::FuncRef(Some(f)) => {
                 // Add a function import to the stub module, and then initialize
                 // our global with a `ref.func` to grab that imported function.
-                let signatures = store.signatures().borrow();
                 let shared_sig_index = f.sig_index();
-                let (wasm, _) = signatures
-                    .lookup_shared(shared_sig_index)
-                    .expect("signature not registered");
-                let local_sig_index = module.signatures.push(wasm.clone());
-                let func_index = module.functions.push(local_sig_index);
+                shared_signature_id = Some(shared_sig_index);
+                let sig_id = SignatureIndex::from_u32(u32::max_value() - 1);
+                module.types.push(ModuleType::Function(sig_id));
+                let func_index = module.functions.push(sig_id);
                 module.num_imported_funcs = 1;
                 module
-                    .imports
-                    .push(("".into(), None, wasm::EntityIndex::Function(func_index)));
+                    .initializers
+                    .push(wasmtime_environ::Initializer::Import {
+                        name: "".into(),
+                        field: None,
+                        index: wasm::EntityIndex::Function(func_index),
+                    });
 
                 let f = f.caller_checked_anyfunc();
                 let f = unsafe { f.as_ref() };
@@ -70,10 +75,11 @@ pub fn create_global(store: &Store, gt: &GlobalType, val: Val) -> Result<StoreIn
         PrimaryMap::new(),
         Box::new(()),
         &func_imports,
+        shared_signature_id,
     )?;
 
     if let Some(x) = externref_init {
-        match handle.lookup("").unwrap() {
+        match handle.lookup_by_declaration(&wasm::EntityIndex::Global(global_id)) {
             wasmtime_runtime::Export::Global(g) => unsafe {
                 *(*g.definition).as_externref_mut() = Some(x.inner);
             },

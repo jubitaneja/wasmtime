@@ -542,7 +542,6 @@ impl MachInstEmitInfo for EmitInfo {
 impl MachInstEmit for Inst {
     type State = EmitState;
     type Info = EmitInfo;
-    type UnwindInfo = super::unwind::AArch64UnwindInfo;
 
     fn emit(&self, sink: &mut MachBuffer<Inst>, emit_info: &Self::Info, state: &mut EmitState) {
         // N.B.: we *must* not exceed the "worst-case size" used to compute
@@ -1137,6 +1136,11 @@ impl MachInstEmit for Inst {
                         inst_common::AtomicRmwOp::And => 0b100_01010_00_0,
                         inst_common::AtomicRmwOp::Or => 0b101_01010_00_0,
                         inst_common::AtomicRmwOp::Xor => 0b110_01010_00_0,
+                        inst_common::AtomicRmwOp::Nand
+                        | inst_common::AtomicRmwOp::Umin
+                        | inst_common::AtomicRmwOp::Umax
+                        | inst_common::AtomicRmwOp::Smin
+                        | inst_common::AtomicRmwOp::Smax => todo!("{:?}", op),
                         inst_common::AtomicRmwOp::Xchg => unreachable!(),
                     };
                     sink.put4(enc_arith_rrr(bits_31_21, 0b000000, x28wr, x27, x26));
@@ -1312,6 +1316,13 @@ impl MachInstEmit for Inst {
                         | machreg_to_vec(rd.to_reg()),
                 );
             }
+            &Inst::FpuExtend { rd, rn, size } => {
+                sink.put4(enc_fpurr(
+                    0b000_11110_00_1_000000_10000 | (size.ftype() << 13),
+                    rd,
+                    rn,
+                ));
+            }
             &Inst::FpuRR { fpu_op, rd, rn } => {
                 let top22 = match fpu_op {
                     FPUOp1::Abs32 => 0b000_11110_00_1_000001_10000,
@@ -1456,12 +1467,18 @@ impl MachInstEmit for Inst {
                         debug_assert!(size == VectorSize::Size32x4 || size == VectorSize::Size64x2);
                         (0b0, 0b11000, enc_size | 0b10)
                     }
+                    VecMisc2::Cnt => {
+                        debug_assert!(size == VectorSize::Size8x8 || size == VectorSize::Size8x16);
+                        (0b0, 0b00101, enc_size)
+                    }
                 };
                 sink.put4(enc_vec_rr_misc((q << 1) | u, size, bits_12_16, rd, rn));
             }
             &Inst::VecLanes { op, rd, rn, size } => {
                 let (q, size) = match size {
+                    VectorSize::Size8x8 => (0b0, 0b00),
                     VectorSize::Size8x16 => (0b1, 0b00),
+                    VectorSize::Size16x4 => (0b0, 0b01),
                     VectorSize::Size16x8 => (0b1, 0b01),
                     VectorSize::Size32x4 => (0b1, 0b10),
                     _ => unreachable!(),
@@ -1745,6 +1762,17 @@ impl MachInstEmit for Inst {
                         | (machreg_to_vec(rn) << 5)
                         | machreg_to_vec(rd.to_reg()),
                 );
+            }
+            &Inst::VecDupFPImm { rd, imm, size } => {
+                let imm = imm.enc_bits();
+                let op = match size.lane_size() {
+                    ScalarSize::Size32 => 0,
+                    ScalarSize::Size64 => 1,
+                    _ => unimplemented!(),
+                };
+                let q_op = op | ((size.is_128bits() as u32) << 1);
+
+                sink.put4(enc_asimd_mod_imm(rd, q_op, 0b1111, imm));
             }
             &Inst::VecDupImm {
                 rd,
@@ -2346,6 +2374,13 @@ impl MachInstEmit for Inst {
                     sink.emit_island();
                     sink.bind_label(jump_around_label);
                 }
+            }
+            &Inst::ValueLabelMarker { .. } => {
+                // Nothing; this is only used to compute debug info.
+            }
+
+            &Inst::Unwind { ref inst } => {
+                sink.add_unwind(inst.clone());
             }
         }
 

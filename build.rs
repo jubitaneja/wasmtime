@@ -31,6 +31,8 @@ fn main() -> anyhow::Result<()> {
             test_directory_module(out, "tests/misc_testsuite/bulk-memory-operations", strategy)?;
             test_directory_module(out, "tests/misc_testsuite/reference-types", strategy)?;
             test_directory_module(out, "tests/misc_testsuite/multi-memory", strategy)?;
+            test_directory_module(out, "tests/misc_testsuite/module-linking", strategy)?;
+            test_directory_module(out, "tests/misc_testsuite/threads", strategy)?;
             Ok(())
         })?;
 
@@ -109,7 +111,8 @@ fn test_directory(
 
     let testsuite = &extract_name(path);
     for entry in dir_entries.iter() {
-        write_testsuite_tests(out, entry, testsuite, strategy)?;
+        write_testsuite_tests(out, entry, testsuite, strategy, false)?;
+        write_testsuite_tests(out, entry, testsuite, strategy, true)?;
     }
 
     Ok(dir_entries.len())
@@ -146,6 +149,7 @@ fn write_testsuite_tests(
     path: impl AsRef<Path>,
     testsuite: &str,
     strategy: &str,
+    pooling: bool,
 ) -> anyhow::Result<()> {
     let path = path.as_ref();
     let testname = extract_name(path);
@@ -158,14 +162,24 @@ fn write_testsuite_tests(
         )?;
     } else if ignore(testsuite, &testname, strategy) {
         writeln!(out, "#[ignore]")?;
+    } else if pooling {
+        // Ignore on aarch64 due to using QEMU for running tests (limited memory)
+        writeln!(out, r#"#[cfg_attr(target_arch = "aarch64", ignore)]"#)?;
     }
-    writeln!(out, "fn r#{}() {{", &testname)?;
+
+    writeln!(
+        out,
+        "fn r#{}{}() {{",
+        &testname,
+        if pooling { "_pooling" } else { "" }
+    )?;
     writeln!(out, "    let _ = env_logger::try_init();")?;
     writeln!(
         out,
-        "    crate::wast::run_wast(r#\"{}\"#, crate::wast::Strategy::{}).unwrap();",
+        "    crate::wast::run_wast(r#\"{}\"#, crate::wast::Strategy::{}, {}).unwrap();",
         path.display(),
-        strategy
+        strategy,
+        pooling
     )?;
     writeln!(out, "}}")?;
     writeln!(out)?;
@@ -180,41 +194,19 @@ fn experimental_x64_should_panic(testsuite: &str, testname: &str, strategy: &str
     }
 
     match (testsuite, testname) {
-        ("simd", "simd_address") => return false,
-        ("simd", "simd_bitwise") => return false,
-        ("simd", "simd_bit_shift") => return false,
-        ("simd", "simd_boolean") => return false,
-        ("simd", "simd_const") => return false,
-        ("simd", "simd_i8x16_arith") => return false,
-        ("simd", "simd_i8x16_arith2") => return false,
-        ("simd", "simd_i8x16_cmp") => return false,
-        ("simd", "simd_i8x16_sat_arith") => return false,
-        ("simd", "simd_i16x8_arith") => return false,
-        ("simd", "simd_i16x8_arith2") => return false,
-        ("simd", "simd_i16x8_cmp") => return false,
-        ("simd", "simd_i16x8_sat_arith") => return false,
-        ("simd", "simd_i32x4_arith") => return false,
-        ("simd", "simd_i32x4_arith2") => return false,
-        ("simd", "simd_i32x4_cmp") => return false,
-        ("simd", "simd_i64x2_arith") => return false,
-        ("simd", "simd_f32x4") => return false,
-        ("simd", "simd_f32x4_arith") => return false,
-        ("simd", "simd_f32x4_cmp") => return false,
-        ("simd", "simd_f32x4_pmin_pmax") => return false,
-        ("simd", "simd_f64x2") => return false,
-        ("simd", "simd_f64x2_arith") => return false,
-        ("simd", "simd_f64x2_cmp") => return false,
-        ("simd", "simd_f64x2_pmin_pmax") => return false,
-        ("simd", "simd_lane") => return false,
-        ("simd", "simd_load") => return false,
-        ("simd", "simd_load_splat") => return false,
-        ("simd", "simd_splat") => return false,
-        ("simd", "simd_store") => return false,
-        ("simd", "simd_conversions") => return false,
-        ("simd", _) => return true,
+        ("simd", "simd_i8x16_arith2") => return true, // Unsupported feature: proposed simd operator I8x16Popcnt
+        ("simd", "simd_conversions") => return true, // unknown operator or unexpected token: tests/spec_testsuite/proposals/simd/simd_conversions.wast:724:6
+        ("simd", "simd_i16x8_extadd_pairwise_i8x16") => return true,
+        ("simd", "simd_i16x8_extmul_i8x16") => return true,
+        ("simd", "simd_i16x8_q15mulr_sat_s") => return true,
+        ("simd", "simd_i32x4_extadd_pairwise_i16x8") => return true,
+        ("simd", "simd_i32x4_extmul_i16x8") => return true,
+        ("simd", "simd_i32x4_trunc_sat_f64x2") => return true,
+        ("simd", "simd_i64x2_extmul_i32x4") => return true,
+        ("simd", "simd_int_to_int_extend") => return true,
+        ("simd", _) => return false,
         _ => {}
     }
-
     false
 }
 
@@ -236,21 +228,34 @@ fn ignore(testsuite: &str, testname: &str, strategy: &str) -> bool {
                 return env::var("CARGO_CFG_TARGET_ARCH").unwrap() != "x86_64";
             }
 
+            // These are new instructions that are not really implemented in any backend.
+            ("simd", "simd_i8x16_arith2")
+            | ("simd", "simd_conversions")
+            | ("simd", "simd_i16x8_extadd_pairwise_i8x16")
+            | ("simd", "simd_i16x8_extmul_i8x16")
+            | ("simd", "simd_i16x8_q15mulr_sat_s")
+            | ("simd", "simd_i32x4_extadd_pairwise_i16x8")
+            | ("simd", "simd_i32x4_extmul_i16x8")
+            | ("simd", "simd_i32x4_trunc_sat_f64x2")
+            | ("simd", "simd_i64x2_extmul_i32x4")
+            | ("simd", "simd_int_to_int_extend") => return true,
+
+            // These are only implemented on x64.
+            ("simd", "simd_i64x2_arith2") | ("simd", "simd_boolean") => {
+                return !cfg!(feature = "experimental_x64")
+            }
+
             // These are only implemented on aarch64 and x64.
-            ("simd", "simd_boolean")
+            ("simd", "simd_i64x2_cmp")
             | ("simd", "simd_f32x4_pmin_pmax")
-            | ("simd", "simd_f64x2_pmin_pmax") => {
+            | ("simd", "simd_f64x2_pmin_pmax")
+            | ("simd", "simd_f32x4_rounding")
+            | ("simd", "simd_f64x2_rounding")
+            | ("simd", "simd_i32x4_dot_i16x8") => {
                 return !(cfg!(feature = "experimental_x64")
                     || env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "aarch64")
             }
 
-            // These are only implemented on aarch64.
-            ("simd", "simd_f32x4_rounding") | ("simd", "simd_f64x2_rounding") => {
-                return env::var("CARGO_CFG_TARGET_ARCH").unwrap() != "aarch64";
-            }
-
-            // These tests have simd operators which aren't implemented yet.
-            // (currently none)
             _ => {}
         },
         _ => panic!("unrecognized strategy"),

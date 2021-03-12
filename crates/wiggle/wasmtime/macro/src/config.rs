@@ -1,5 +1,6 @@
+pub use wiggle_generate::config::AsyncConf;
 use {
-    proc_macro2::{Span, TokenStream},
+    proc_macro2::Span,
     std::collections::HashMap,
     syn::{
         braced,
@@ -7,16 +8,16 @@ use {
         punctuated::Punctuated,
         Error, Ident, Path, Result, Token,
     },
-    wiggle_generate::config::{CtxConf, WitxConf},
+    wiggle_generate::config::WitxConf,
 };
-
 #[derive(Debug, Clone)]
 pub struct Config {
     pub target: TargetConf,
     pub witx: WitxConf,
     pub ctx: CtxConf,
     pub modules: ModulesConf,
-    pub missing_memory: MissingMemoryConf,
+    #[cfg(feature = "async")]
+    pub async_: AsyncConf,
 }
 
 #[derive(Debug, Clone)]
@@ -25,7 +26,8 @@ pub enum ConfigField {
     Witx(WitxConf),
     Ctx(CtxConf),
     Modules(ModulesConf),
-    MissingMemory(MissingMemoryConf),
+    #[cfg(feature = "async")]
+    Async(AsyncConf),
 }
 
 mod kw {
@@ -36,7 +38,6 @@ mod kw {
     syn::custom_keyword!(modules);
     syn::custom_keyword!(name);
     syn::custom_keyword!(docs);
-    syn::custom_keyword!(missing_memory);
     syn::custom_keyword!(function_override);
 }
 
@@ -63,10 +64,20 @@ impl Parse for ConfigField {
             input.parse::<kw::modules>()?;
             input.parse::<Token![:]>()?;
             Ok(ConfigField::Modules(input.parse()?))
-        } else if lookahead.peek(kw::missing_memory) {
-            input.parse::<kw::missing_memory>()?;
+        } else if lookahead.peek(Token![async]) {
+            input.parse::<Token![async]>()?;
             input.parse::<Token![:]>()?;
-            Ok(ConfigField::MissingMemory(input.parse()?))
+            #[cfg(feature = "async")]
+            {
+                Ok(ConfigField::Async(input.parse()?))
+            }
+            #[cfg(not(feature = "async"))]
+            {
+                Err(syn::Error::new(
+                    input.span(),
+                    "async not supported, enable cargo feature \"async\"",
+                ))
+            }
         } else {
             Err(lookahead.error())
         }
@@ -79,7 +90,8 @@ impl Config {
         let mut witx = None;
         let mut ctx = None;
         let mut modules = None;
-        let mut missing_memory = None;
+        #[cfg(feature = "async")]
+        let mut async_ = None;
         for f in fields {
             match f {
                 ConfigField::Target(c) => {
@@ -106,11 +118,12 @@ impl Config {
                     }
                     modules = Some(c);
                 }
-                ConfigField::MissingMemory(c) => {
-                    if missing_memory.is_some() {
-                        return Err(Error::new(err_loc, "duplicate `missing_memory` field"));
+                #[cfg(feature = "async")]
+                ConfigField::Async(c) => {
+                    if async_.is_some() {
+                        return Err(Error::new(err_loc, "duplicate `async` field"));
                     }
-                    missing_memory = Some(c);
+                    async_ = Some(c);
                 }
             }
         }
@@ -119,8 +132,8 @@ impl Config {
             witx: witx.ok_or_else(|| Error::new(err_loc, "`witx` field required"))?,
             ctx: ctx.ok_or_else(|| Error::new(err_loc, "`ctx` field required"))?,
             modules: modules.ok_or_else(|| Error::new(err_loc, "`modules` field required"))?,
-            missing_memory: missing_memory
-                .ok_or_else(|| Error::new(err_loc, "`missing_memory` field required"))?,
+            #[cfg(feature = "async")]
+            async_: async_.unwrap_or_default(),
         })
     }
 
@@ -145,6 +158,19 @@ impl Parse for Config {
 }
 
 #[derive(Debug, Clone)]
+pub struct CtxConf {
+    pub name: syn::Type,
+}
+
+impl Parse for CtxConf {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(CtxConf {
+            name: input.parse()?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TargetConf {
     pub path: Path,
 }
@@ -160,7 +186,6 @@ impl Parse for TargetConf {
 enum ModuleConfField {
     Name(Ident),
     Docs(String),
-    FunctionOverride(FunctionOverrideConf),
 }
 
 impl Parse for ModuleConfField {
@@ -175,10 +200,6 @@ impl Parse for ModuleConfField {
             input.parse::<Token![:]>()?;
             let docs: syn::LitStr = input.parse()?;
             Ok(ModuleConfField::Docs(docs.value()))
-        } else if lookahead.peek(kw::function_override) {
-            input.parse::<kw::function_override>()?;
-            input.parse::<Token![:]>()?;
-            Ok(ModuleConfField::FunctionOverride(input.parse()?))
         } else {
             Err(lookahead.error())
         }
@@ -189,14 +210,12 @@ impl Parse for ModuleConfField {
 pub struct ModuleConf {
     pub name: Ident,
     pub docs: Option<String>,
-    pub function_override: FunctionOverrideConf,
 }
 
 impl ModuleConf {
     fn build(fields: impl Iterator<Item = ModuleConfField>, err_loc: Span) -> Result<Self> {
         let mut name = None;
         let mut docs = None;
-        let mut function_override = None;
         for f in fields {
             match f {
                 ModuleConfField::Name(c) => {
@@ -211,18 +230,11 @@ impl ModuleConf {
                     }
                     docs = Some(c);
                 }
-                ModuleConfField::FunctionOverride(c) => {
-                    if function_override.is_some() {
-                        return Err(Error::new(err_loc, "duplicate `function_override` field"));
-                    }
-                    function_override = Some(c);
-                }
             }
         }
         Ok(ModuleConf {
             name: name.ok_or_else(|| Error::new(err_loc, "`name` field required"))?,
             docs,
-            function_override: function_override.unwrap_or_default(),
         })
     }
 }
@@ -262,58 +274,5 @@ impl Parse for ModulesConf {
         Ok(ModulesConf {
             mods: fields.into_iter().collect(),
         })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct MissingMemoryConf {
-    pub err: TokenStream,
-}
-impl Parse for MissingMemoryConf {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let contents;
-        let _lbrace = braced!(contents in input);
-        Ok(MissingMemoryConf {
-            err: contents.parse()?,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct FunctionOverrideConf {
-    pub funcs: Vec<FunctionOverrideField>,
-}
-impl FunctionOverrideConf {
-    pub fn find(&self, name: &str) -> Option<&Ident> {
-        self.funcs
-            .iter()
-            .find(|f| f.name == name)
-            .map(|f| &f.replacement)
-    }
-}
-
-impl Parse for FunctionOverrideConf {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let contents;
-        let _lbrace = braced!(contents in input);
-        let fields: Punctuated<FunctionOverrideField, Token![,]> =
-            contents.parse_terminated(FunctionOverrideField::parse)?;
-        Ok(FunctionOverrideConf {
-            funcs: fields.into_iter().collect(),
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctionOverrideField {
-    pub name: String,
-    pub replacement: Ident,
-}
-impl Parse for FunctionOverrideField {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let name = input.parse::<Ident>()?.to_string();
-        input.parse::<Token![=>]>()?;
-        let replacement = input.parse::<Ident>()?;
-        Ok(FunctionOverrideField { name, replacement })
     }
 }

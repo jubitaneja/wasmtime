@@ -8,7 +8,6 @@ use wiggle_test::WasiCtx;
 
 wiggle::from_witx!({
     witx: ["$CARGO_MANIFEST_DIR/tests/wasi.witx"],
-    ctx: WasiCtx,
 });
 
 // The only test in this file is to verify that the witx document provided by the
@@ -322,7 +321,7 @@ impl<'a> crate::wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx<'a> {
         unimplemented!("poll_oneoff")
     }
 
-    fn proc_exit(&self, _rval: types::Exitcode) -> std::result::Result<(), ()> {
+    fn proc_exit(&self, _rval: types::Exitcode) -> wiggle::Trap {
         unimplemented!("proc_exit")
     }
 

@@ -3,8 +3,9 @@
 // You can execute this example with `cargo run --example linking`
 
 use anyhow::Result;
+use wasi_cap_std_sync::WasiCtxBuilder;
 use wasmtime::*;
-use wasmtime_wasi::{Wasi, WasiCtx};
+use wasmtime_wasi::Wasi;
 
 fn main() -> Result<()> {
     let engine = Engine::default();
@@ -13,7 +14,13 @@ fn main() -> Result<()> {
     // First set up our linker which is going to be linking modules together. We
     // want our linker to have wasi available, so we set that up here as well.
     let mut linker = Linker::new(&store);
-    let wasi = Wasi::new(&store, WasiCtx::new(std::env::args())?);
+    let wasi = Wasi::new(
+        &store,
+        WasiCtxBuilder::new()
+            .inherit_stdio()
+            .inherit_args()?
+            .build()?,
+    );
     wasi.add_to_linker(&mut linker)?;
 
     // Load and compile our two modules
@@ -27,8 +34,7 @@ fn main() -> Result<()> {
 
     // And with that we can perform the final link and the execute the module.
     let linking1 = linker.instantiate(&linking1)?;
-    let run = linking1.get_func("run").unwrap();
-    let run = run.get0::<()>()?;
-    run()?;
+    let run = linking1.get_typed_func::<(), ()>("run")?;
+    run.call(())?;
     Ok(())
 }

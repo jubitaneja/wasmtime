@@ -20,11 +20,8 @@ fn test_module_serialize_simple() -> Result<()> {
 
     let store = Store::default();
     let instance = deserialize_and_instantiate(&store, &buffer)?;
-    let run = instance
-        .get_func("run")
-        .ok_or(anyhow::format_err!("failed to find `run` function export"))?
-        .get0::<i32>()?;
-    let result = run()?;
+    let run = instance.get_typed_func::<(), i32>("run")?;
+    let result = run.call(())?;
 
     assert_eq!(42, result);
     Ok(())
@@ -39,7 +36,7 @@ fn test_module_serialize_fail() -> Result<()> {
 
     let mut config = Config::new();
     config.cranelift_opt_level(OptLevel::None);
-    let store = Store::new(&Engine::new(&config));
+    let store = Store::new(&Engine::new(&config)?);
     match deserialize_and_instantiate(&store, &buffer) {
         Ok(_) => bail!("expected failure at deserialization"),
         Err(_) => (),

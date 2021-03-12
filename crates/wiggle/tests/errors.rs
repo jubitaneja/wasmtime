@@ -17,13 +17,12 @@ mod convert_just_errno {
     // trivial function.
     wiggle::from_witx!({
         witx_literal: "
-(typename $errno (enum u8 $ok $invalid_arg $picket_line))
+(typename $errno (enum (@witx tag u8) $ok $invalid_arg $picket_line))
 (module $one_error_conversion
   (@interface func (export \"foo\")
      (param $strike u32)
-     (result $err $errno)))
+     (result $err (expected (error $errno)))))
     ",
-        ctx: WasiCtx,
         errors: { errno => RichError },
     });
 
@@ -34,7 +33,7 @@ mod convert_just_errno {
     /// When the `errors` mapping in witx is non-empty, we need to impl the
     /// types::UserErrorConversion trait that wiggle generates from that mapping.
     impl<'a> types::UserErrorConversion for WasiCtx<'a> {
-        fn errno_from_rich_error(&self, e: RichError) -> Result<types::Errno, String> {
+        fn errno_from_rich_error(&self, e: RichError) -> Result<types::Errno, wiggle::Trap> {
             // WasiCtx can collect a Vec<String> log so we can test this. We're
             // logging the Display impl that `thiserror::Error` provides us.
             self.log.borrow_mut().push(e.to_string());
@@ -68,7 +67,7 @@ mod convert_just_errno {
         let r0 = one_error_conversion::foo(&ctx, &host_memory, 0);
         assert_eq!(
             r0,
-            Ok(i32::from(types::Errno::Ok)),
+            Ok(types::Errno::Ok as i32),
             "Expected return value for strike=0"
         );
         assert!(ctx.log.borrow().is_empty(), "No error log for strike=0");
@@ -77,7 +76,7 @@ mod convert_just_errno {
         let r1 = one_error_conversion::foo(&ctx, &host_memory, 1);
         assert_eq!(
             r1,
-            Ok(i32::from(types::Errno::PicketLine)),
+            Ok(types::Errno::PicketLine as i32),
             "Expected return value for strike=1"
         );
         assert_eq!(
@@ -90,7 +89,7 @@ mod convert_just_errno {
         let r2 = one_error_conversion::foo(&ctx, &host_memory, 2);
         assert_eq!(
             r2,
-            Ok(i32::from(types::Errno::InvalidArg)),
+            Ok(types::Errno::InvalidArg as i32),
             "Expected return value for strike=2"
         );
         assert_eq!(
@@ -115,21 +114,24 @@ mod convert_multiple_error_types {
         TooMuchCoffee(usize),
     }
 
-    // Just like the other error, except that we have a second errno type:
-    // trivial function.
+    // Just like the prior test, except that we have a second errno type. This should mean there
+    // are two functions in UserErrorConversion.
+    // Additionally, test that the function "baz" marked noreturn always returns a wiggle::Trap.
     wiggle::from_witx!({
         witx_literal: "
-(typename $errno (enum u8 $ok $invalid_arg $picket_line))
-(typename $errno2 (enum u8 $ok $too_much_coffee))
+(typename $errno (enum (@witx tag u8) $ok $invalid_arg $picket_line))
+(typename $errno2 (enum (@witx tag u8) $ok $too_much_coffee))
 (module $two_error_conversions
   (@interface func (export \"foo\")
      (param $strike u32)
-     (result $err $errno))
+     (result $err (expected (error $errno))))
   (@interface func (export \"bar\")
      (param $drink u32)
-     (result $err $errno2)))
+     (result $err (expected (error $errno2))))
+  (@interface func (export \"baz\")
+     (param $drink u32)
+     (@witx noreturn)))
     ",
-        ctx: WasiCtx,
         errors: { errno => RichError, errno2 => AnotherRichError },
     });
 
@@ -159,13 +161,13 @@ mod convert_multiple_error_types {
     // each member of the `errors` mapping.
     // Bodies elided.
     impl<'a> types::UserErrorConversion for WasiCtx<'a> {
-        fn errno_from_rich_error(&self, _e: RichError) -> Result<types::Errno, String> {
+        fn errno_from_rich_error(&self, _e: RichError) -> Result<types::Errno, wiggle::Trap> {
             unimplemented!()
         }
         fn errno2_from_another_rich_error(
             &self,
             _e: AnotherRichError,
-        ) -> Result<types::Errno2, String> {
+        ) -> Result<types::Errno2, wiggle::Trap> {
             unimplemented!()
         }
     }
@@ -176,6 +178,9 @@ mod convert_multiple_error_types {
             unimplemented!()
         }
         fn bar(&self, _: u32) -> Result<(), AnotherRichError> {
+            unimplemented!()
+        }
+        fn baz(&self, _: u32) -> wiggle::Trap {
             unimplemented!()
         }
     }

@@ -1,7 +1,7 @@
 //! WebAssembly trap handling, which is built on top of the lower-level
 //! signalhandling mechanisms.
 
-use crate::VMContext;
+use crate::VMInterrupts;
 use backtrace::Backtrace;
 use std::any::Any;
 use std::cell::Cell;
@@ -11,6 +11,8 @@ use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use std::sync::Once;
 use wasmtime_environ::ir;
+
+pub use self::tls::TlsRestore;
 
 extern "C" {
     fn RegisterSetjmp(
@@ -118,6 +120,42 @@ cfg_if::cfg_if! {
                     return false;
                 } else if jmp_buf as usize == 1 {
                     return true;
+
+                // on macOS this is a bit special, unfortunately. If we were to
+                // `siglongjmp` out of the signal handler that notably does
+                // *not* reset the sigaltstack state of our signal handler. This
+                // seems to trick the kernel into thinking that the sigaltstack
+                // is still in use upon delivery of the next signal, meaning
+                // that the sigaltstack is not ever used again if we immediately
+                // call `Unwind` here.
+                //
+                // Note that if we use `longjmp` instead of `siglongjmp` then
+                // the problem is fixed. The problem with that, however, is that
+                // `setjmp` is much slower than `sigsetjmp` due to the
+                // preservation of the proceses signal mask. The reason
+                // `longjmp` appears to work is that it seems to call a function
+                // (according to published macOS sources) called
+                // `_sigunaltstack` which updates the kernel to say the
+                // sigaltstack is no longer in use. We ideally want to call that
+                // here but I don't think there's a stable way for us to call
+                // that.
+                //
+                // Given all that, on macOS only, we do the next best thing. We
+                // return from the signal handler after updating the register
+                // context. This will cause control to return to our
+                // `unwind_shim` function defined here which will perform the
+                // `Unwind` (`siglongjmp`) for us. The reason this works is that
+                // by returning from the signal handler we'll trigger all the
+                // normal machinery for "the signal handler is done running"
+                // which will clear the sigaltstack flag and allow reusing it
+                // for the next signal. Then upon resuming in our custom code we
+                // blow away the stack anyway with a longjmp.
+                } else if cfg!(target_os = "macos") {
+                    unsafe extern "C" fn unwind_shim(jmp_buf: *const u8) {
+                        Unwind(jmp_buf)
+                    }
+                    set_pc(context, unwind_shim as usize, jmp_buf as usize);
+                    return true;
                 } else {
                     Unwind(jmp_buf)
                 }
@@ -164,14 +202,55 @@ cfg_if::cfg_if! {
                 } else if #[cfg(all(any(target_os = "linux", target_os = "android"), target_arch = "aarch64"))] {
                     let cx = &*(cx as *const libc::ucontext_t);
                     cx.uc_mcontext.pc as *const u8
-                } else if #[cfg(target_os = "macos")] {
+                } else if #[cfg(all(target_os = "macos", target_arch = "x86_64"))] {
                     let cx = &*(cx as *const libc::ucontext_t);
                     (*cx.uc_mcontext).__ss.__rip as *const u8
+                } else if #[cfg(all(target_os = "macos", target_arch = "x86"))] {
+                    let cx = &*(cx as *const libc::ucontext_t);
+                    (*cx.uc_mcontext).__ss.__eip as *const u8
+                } else if #[cfg(all(target_os = "macos", target_arch = "aarch64"))] {
+                    let cx = &*(cx as *const libc::ucontext_t);
+                    (*cx.uc_mcontext).__ss.__pc as *const u8
                 } else if #[cfg(all(target_os = "freebsd", target_arch = "x86_64"))] {
                     let cx = &*(cx as *const libc::ucontext_t);
                     cx.uc_mcontext.mc_rip as *const u8
                 } else {
                     compile_error!("unsupported platform");
+                }
+            }
+        }
+
+        // This is only used on macOS targets for calling an unwinding shim
+        // function to ensure that we return from the signal handler.
+        //
+        // See more comments above where this is called for what it's doing.
+        unsafe fn set_pc(cx: *mut libc::c_void, pc: usize, arg1: usize) {
+            cfg_if::cfg_if! {
+                if #[cfg(not(target_os = "macos"))] {
+                    drop((cx, pc, arg1));
+                    unreachable!(); // not used on these platforms
+                } else if #[cfg(target_arch = "x86_64")] {
+                    let cx = &mut *(cx as *mut libc::ucontext_t);
+                    (*cx.uc_mcontext).__ss.__rip = pc as u64;
+                    (*cx.uc_mcontext).__ss.__rdi = arg1 as u64;
+                    // We're simulating a "pseudo-call" so we need to ensure
+                    // stack alignment is properly respected, notably that on a
+                    // `call` instruction the stack is 8/16-byte aligned, then
+                    // the function adjusts itself to be 16-byte aligned.
+                    //
+                    // Most of the time the stack pointer is 16-byte aligned at
+                    // the time of the trap but for more robust-ness with JIT
+                    // code where it may ud2 in a prologue check before the
+                    // stack is aligned we double-check here.
+                    if (*cx.uc_mcontext).__ss.__rsp % 16 == 0 {
+                        (*cx.uc_mcontext).__ss.__rsp -= 8;
+                    }
+                } else if #[cfg(target_arch = "aarch64")] {
+                    let cx = &mut *(cx as *mut libc::ucontext_t);
+                    (*cx.uc_mcontext).__ss.__pc = pc as u64;
+                    (*cx.uc_mcontext).__ss.__x[0] = arg1 as u64;
+                } else {
+                    compile_error!("unsupported macos target architecture");
                 }
             }
         }
@@ -368,11 +447,7 @@ impl Trap {
 /// returning them as a `Result`.
 ///
 /// Highly unsafe since `closure` won't have any dtors run.
-pub unsafe fn catch_traps<F>(
-    vmctx: *mut VMContext,
-    trap_info: &impl TrapInfo,
-    mut closure: F,
-) -> Result<(), Trap>
+pub unsafe fn catch_traps<F>(trap_info: &impl TrapInfo, mut closure: F) -> Result<(), Trap>
 where
     F: FnMut(),
 {
@@ -380,7 +455,7 @@ where
     #[cfg(unix)]
     setup_unix_sigaltstack()?;
 
-    return CallThreadState::new(vmctx, trap_info).with(|cx| {
+    return CallThreadState::new(trap_info).with(|cx| {
         RegisterSetjmp(
             cx.jmp_buf.as_ptr(),
             call_closure::<F>,
@@ -404,14 +479,21 @@ pub fn with_last_info<R>(func: impl FnOnce(Option<&dyn Any>) -> R) -> R {
     tls::with(|state| func(state.map(|s| s.trap_info.as_any())))
 }
 
+/// Invokes the contextually-defined context's out-of-gas function.
+///
+/// (basically delegates to `wasmtime::Store::out_of_gas`)
+pub fn out_of_gas() {
+    tls::with(|state| state.unwrap().trap_info.out_of_gas())
+}
+
 /// Temporary state stored on the stack which is registered in the `tls` module
 /// below for calls into wasm.
 pub struct CallThreadState<'a> {
     unwind: Cell<UnwindReason>,
     jmp_buf: Cell<*const u8>,
-    vmctx: *mut VMContext,
     handling_trap: Cell<bool>,
     trap_info: &'a (dyn TrapInfo + 'a),
+    prev: Cell<tls::Ptr>,
 }
 
 /// A package of functionality needed by `catch_traps` to figure out what to do
@@ -426,7 +508,7 @@ pub unsafe trait TrapInfo {
 
     /// Returns whether the given program counter lies within wasm code,
     /// indicating whether we should handle a trap or not.
-    fn is_wasm_code(&self, pc: usize) -> bool;
+    fn is_wasm_trap(&self, pc: usize) -> bool;
 
     /// Uses `call` to call a custom signal handler, if one is specified.
     ///
@@ -436,6 +518,15 @@ pub unsafe trait TrapInfo {
     /// Returns the maximum size, in bytes, the wasm native stack is allowed to
     /// grow to.
     fn max_wasm_stack(&self) -> usize;
+
+    /// Callback invoked whenever WebAssembly has entirely consumed the fuel
+    /// that it was allotted.
+    ///
+    /// This function may return, and it may also `raise_lib_trap`.
+    fn out_of_gas(&self);
+
+    /// Returns the VM interrupts to use for interrupting Wasm code.
+    fn interrupts(&self) -> &VMInterrupts;
 }
 
 enum UnwindReason {
@@ -447,13 +538,13 @@ enum UnwindReason {
 }
 
 impl<'a> CallThreadState<'a> {
-    fn new(vmctx: *mut VMContext, trap_info: &'a (dyn TrapInfo + 'a)) -> CallThreadState<'a> {
+    fn new(trap_info: &'a (dyn TrapInfo + 'a)) -> CallThreadState<'a> {
         CallThreadState {
             unwind: Cell::new(UnwindReason::None),
-            vmctx,
             jmp_buf: Cell::new(ptr::null()),
             handling_trap: Cell::new(false),
             trap_info,
+            prev: Cell::new(ptr::null()),
         }
     }
 
@@ -472,10 +563,9 @@ impl<'a> CallThreadState<'a> {
             UnwindReason::LibTrap(trap) => Err(trap),
             UnwindReason::JitTrap { backtrace, pc } => {
                 debug_assert_eq!(ret, 0);
-                let maybe_interrupted = unsafe {
-                    let interrupts = (*self.vmctx).instance().interrupts();
-                    (**interrupts).stack_limit.load(SeqCst) == wasmtime_environ::INTERRUPTED
-                };
+                let interrupts = self.trap_info.interrupts();
+                let maybe_interrupted =
+                    interrupts.stack_limit.load(SeqCst) == wasmtime_environ::INTERRUPTED;
                 Err(Trap::Jit {
                     pc,
                     backtrace,
@@ -532,7 +622,7 @@ impl<'a> CallThreadState<'a> {
         // (a million bytes) the slop shouldn't matter too much.
         let wasm_stack_limit = psm::stack_pointer() as usize - self.trap_info.max_wasm_stack();
 
-        let interrupts = unsafe { &**(&*self.vmctx).instance().interrupts() };
+        let interrupts = self.trap_info.interrupts();
         let reset_stack_limit = match interrupts.stack_limit.compare_exchange(
             usize::max_value(),
             wasm_stack_limit,
@@ -629,7 +719,7 @@ impl<'a> CallThreadState<'a> {
         }
 
         // If this fault wasn't in wasm code, then it's not our problem
-        if !self.trap_info.is_wasm_code(pc as usize) {
+        if !self.trap_info.is_wasm_trap(pc as usize) {
             return ptr::null();
         }
 
@@ -667,43 +757,108 @@ impl<T: Copy> Drop for ResetCell<'_, T> {
 // the caller to the trap site.
 mod tls {
     use super::CallThreadState;
-    use std::cell::Cell;
     use std::mem;
     use std::ptr;
 
-    thread_local!(static PTR: Cell<*const CallThreadState<'static>> = Cell::new(ptr::null()));
+    pub use raw::Ptr;
+
+    // An even *more* inner module for dealing with TLS. This actually has the
+    // thread local variable and has functions to access the variable.
+    //
+    // Note that this is specially done to fully encapsulate that the accessors
+    // for tls must not be inlined. Wasmtime's async support employs stack
+    // switching which can resume execution on different OS threads. This means
+    // that borrows of our TLS pointer must never live across accesses because
+    // otherwise the access may be split across two threads and cause unsafety.
+    //
+    // This also means that extra care is taken by the runtime to save/restore
+    // these TLS values when the runtime may have crossed threads.
+    mod raw {
+        use super::CallThreadState;
+        use std::cell::Cell;
+        use std::ptr;
+
+        pub type Ptr = *const CallThreadState<'static>;
+
+        thread_local!(static PTR: Cell<Ptr> = Cell::new(ptr::null()));
+
+        #[inline(never)] // see module docs for why this is here
+        pub fn replace(val: Ptr) -> Ptr {
+            PTR.with(|p| p.replace(val))
+        }
+
+        #[inline(never)] // see module docs for why this is here
+        pub fn get() -> Ptr {
+            PTR.with(|p| p.get())
+        }
+    }
+
+    /// Opaque state used to help control TLS state across stack switches for
+    /// async support.
+    pub struct TlsRestore(raw::Ptr);
+
+    impl TlsRestore {
+        /// Takes the TLS state that is currently configured and returns a
+        /// token that is used to replace it later.
+        ///
+        /// This is not a safe operation since it's intended to only be used
+        /// with stack switching found with fibers and async wasmtime.
+        pub unsafe fn take() -> TlsRestore {
+            // Our tls pointer must be set at this time, and it must not be
+            // null. We need to restore the previous pointer since we're
+            // removing ourselves from the call-stack, and in the process we
+            // null out our own previous field for safety in case it's
+            // accidentally used later.
+            let raw = raw::get();
+            assert!(!raw.is_null());
+            let prev = (*raw).prev.replace(ptr::null());
+            raw::replace(prev);
+            TlsRestore(raw)
+        }
+
+        /// Restores a previous tls state back into this thread's TLS.
+        ///
+        /// This is unsafe because it's intended to only be used within the
+        /// context of stack switching within wasmtime.
+        pub unsafe fn replace(self) {
+            // We need to configure our previous TLS pointer to whatever is in
+            // TLS at this time, and then we set the current state to ourselves.
+            let prev = raw::get();
+            assert!((*self.0).prev.get().is_null());
+            (*self.0).prev.set(prev);
+            raw::replace(self.0);
+        }
+    }
 
     /// Configures thread local state such that for the duration of the
     /// execution of `closure` any call to `with` will yield `ptr`, unless this
     /// is recursively called again.
-    pub fn set<R>(ptr: &CallThreadState<'_>, closure: impl FnOnce() -> R) -> R {
-        struct Reset<'a, T: Copy>(&'a Cell<T>, T);
+    pub fn set<R>(state: &CallThreadState<'_>, closure: impl FnOnce() -> R) -> R {
+        struct Reset<'a, 'b>(&'a CallThreadState<'b>);
 
-        impl<T: Copy> Drop for Reset<'_, T> {
+        impl Drop for Reset<'_, '_> {
             fn drop(&mut self) {
-                self.0.set(self.1);
+                raw::replace(self.0.prev.replace(ptr::null()));
             }
         }
 
-        PTR.with(|p| {
-            // Note that this extension of the lifetime to `'static` should be
-            // safe because we only ever access it below with an anonymous
-            // lifetime, meaning `'static` never leaks out of this module.
-            let ptr = unsafe {
-                mem::transmute::<*const CallThreadState<'_>, *const CallThreadState<'static>>(ptr)
-            };
-            let _r = Reset(p, p.replace(ptr));
-            closure()
-        })
+        // Note that this extension of the lifetime to `'static` should be
+        // safe because we only ever access it below with an anonymous
+        // lifetime, meaning `'static` never leaks out of this module.
+        let ptr = unsafe {
+            mem::transmute::<*const CallThreadState<'_>, *const CallThreadState<'static>>(state)
+        };
+        let prev = raw::replace(ptr);
+        state.prev.set(prev);
+        let _reset = Reset(state);
+        closure()
     }
 
     /// Returns the last pointer configured with `set` above. Panics if `set`
     /// has not been previously called.
     pub fn with<R>(closure: impl FnOnce(Option<&CallThreadState<'_>>) -> R) -> R {
-        PTR.with(|ptr| {
-            let p = ptr.get();
-            unsafe { closure(if p.is_null() { None } else { Some(&*p) }) }
-        })
+        let p = raw::get();
+        unsafe { closure(if p.is_null() { None } else { Some(&*p) }) }
     }
 }
 
