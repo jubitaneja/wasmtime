@@ -55,6 +55,7 @@ mod test_safepoint;
 mod test_shrink;
 mod test_simple_gvn;
 mod test_simple_preopt;
+//mod test_superopt_baseline;
 mod test_stack_maps;
 mod test_unwind;
 mod test_verifier;
@@ -136,6 +137,7 @@ fn new_subtest(parsed: &TestCommand) -> anyhow::Result<Box<dyn subtest::SubTest>
         "shrink" => test_shrink::subtest(parsed),
         "simple-gvn" => test_simple_gvn::subtest(parsed),
         "simple_preopt" => test_simple_preopt::subtest(parsed),
+        //"superopt_baseline" => test_superopt_baseline::subtest(parsed),
         "stack_maps" => test_stack_maps::subtest(parsed),
         "unwind" => test_unwind::subtest(parsed),
         "verifier" => test_verifier::subtest(parsed),

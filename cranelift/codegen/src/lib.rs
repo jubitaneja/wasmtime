@@ -108,6 +108,7 @@ mod result;
 mod scoped_hash_map;
 mod simple_gvn;
 mod simple_preopt;
+mod superopt_baseline;
 mod stack_layout;
 mod topo_order;
 mod unreachable_code;

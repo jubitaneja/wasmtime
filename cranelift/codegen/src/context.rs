@@ -32,6 +32,7 @@ use crate::result::CodegenResult;
 use crate::settings::{FlagsOrIsa, OptLevel};
 use crate::simple_gvn::do_simple_gvn;
 use crate::simple_preopt::do_preopt;
+use crate::superopt_baseline::do_superopt_baseline;
 use crate::timing;
 use crate::unreachable_code::eliminate_unreachable_code;
 use crate::value_label::{build_value_labels_ranges, ComparableSourceLoc, ValueLabelsRanges};
@@ -343,6 +344,13 @@ impl Context {
     /// Perform pre-legalization rewrites on the function.
     pub fn preopt(&mut self, isa: &dyn TargetIsa) -> CodegenResult<()> {
         do_preopt(&mut self.func, &mut self.cfg, isa);
+        self.verify_if(isa)?;
+        Ok(())
+    }
+
+    /// Perform souper-based peephole optimization (baseline).
+    pub fn superopt_baseline(&mut self, isa: &dyn TargetIsa) -> CodegenResult<()> {
+        do_superopt_baseline(&mut self.func);
         self.verify_if(isa)?;
         Ok(())
     }
