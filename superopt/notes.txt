@@ -1,0 +1,29 @@
+1. peephole branch with superopt_markdown module
+  
+total peepholes in module = 109
+machine: ohm
+
+compile time for wasmtime:  48.86s
+compile time for cranelift:  37.53ss
+compile     time for wasmtime again: 0.11s
+
+2. peephole branch with superopt_clang module
+
+machine: mac
+
+total peeps --- compile time for cranelift -- compile time for wasmtime
+1413            45m
+100             2m08s                         2m14s
+200             2m48s                         2m21s            
+300             2m20s                         2m25s            
+400             2m47s                         2m52s            
+500             3m46s                         3m46s
+600             4m49s                         4m38s
+700             5m48s                         5m37s
+800             7m16s                         7m02s
+900             9m16s                         9m33s
+1000            11m59s                        11m10s
+1100            15m23s                        16m46s
+1200            19m07s                        21m30s
+1300            27m59s                        26m36s
+1413            57m50s                        50m28s
