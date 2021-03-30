@@ -12,7 +12,7 @@ use crate::ir::{Function, InstBuilder, InstructionData};
 use crate::ir::types::I32;
 
 fn superopt_1(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #1\n");
+panic!("Log function: superopt #1\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -51,7 +51,7 @@ _ => {},
 }
 }
 fn superopt_2(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #2\n");
+panic!("Log function: superopt #2\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -90,7 +90,7 @@ _ => {},
 }
 }
 fn superopt_3(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #3\n");
+panic!("Log function: superopt #3\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -130,7 +130,7 @@ _ => {},
 }
 }
 fn superopt_4(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #4\n");
+panic!("Log function: superopt #4\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -169,7 +169,7 @@ _ => {},
 }
 }
 fn superopt_5(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #5\n");
+panic!("Log function: superopt #5\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -208,7 +208,7 @@ _ => {},
 }
 }
 fn superopt_6(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #6\n");
+panic!("Log function: superopt #6\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -246,7 +246,7 @@ _ => {},
 }
 }
 fn superopt_7(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #7\n");
+panic!("Log function: superopt #7\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -285,7 +285,7 @@ _ => {},
 }
 }
 fn superopt_8(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #8\n");
+panic!("Log function: superopt #8\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -324,7 +324,7 @@ _ => {},
 }
 }
 fn superopt_9(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #9\n");
+panic!("Log function: superopt #9\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -363,7 +363,7 @@ _ => {},
 }
 }
 fn superopt_10(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #10\n");
+panic!("Log function: superopt #10\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -402,7 +402,7 @@ _ => {},
 }
 }
 fn superopt_11(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #11\n");
+panic!("Log function: superopt #11\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -440,7 +440,7 @@ _ => {},
 }
 }
 fn superopt_12(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #12\n");
+panic!("Log function: superopt #12\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -478,7 +478,7 @@ _ => {},
 }
 }
 fn superopt_13(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #13\n");
+panic!("Log function: superopt #13\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -518,7 +518,7 @@ _ => {},
 }
 }
 fn superopt_14(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #14\n");
+panic!("Log function: superopt #14\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -596,7 +596,7 @@ _ => {},
 }
 }
 fn superopt_15(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #15\n");
+panic!("Log function: superopt #15\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -654,7 +654,7 @@ _ => {},
 }
 }
 fn superopt_16(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #16\n");
+panic!("Log function: superopt #16\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -712,7 +712,7 @@ _ => {},
 }
 }
 fn superopt_17(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #17\n");
+panic!("Log function: superopt #17\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -752,7 +752,7 @@ _ => {},
 }
 }
 fn superopt_18(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #18\n");
+panic!("Log function: superopt #18\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -810,7 +810,7 @@ _ => {},
 }
 }
 fn superopt_19(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #19\n");
+panic!("Log function: superopt #19\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -870,7 +870,7 @@ _ => {},
 }
 }
 fn superopt_20(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #20\n");
+panic!("Log function: superopt #20\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -929,7 +929,7 @@ _ => {},
 }
 }
 fn superopt_21(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #21\n");
+panic!("Log function: superopt #21\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -988,7 +988,7 @@ _ => {},
 }
 }
 fn superopt_22(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #22\n");
+panic!("Log function: superopt #22\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1047,7 +1047,7 @@ _ => {},
 }
 }
 fn superopt_23(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #23\n");
+panic!("Log function: superopt #23\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1106,7 +1106,7 @@ _ => {},
 }
 }
 fn superopt_24(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #24\n");
+panic!("Log function: superopt #24\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1165,7 +1165,7 @@ _ => {},
 }
 }
 fn superopt_25(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #25\n");
+panic!("Log function: superopt #25\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1224,7 +1224,7 @@ _ => {},
 }
 }
 fn superopt_26(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #26\n");
+panic!("Log function: superopt #26\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1283,7 +1283,7 @@ _ => {},
 }
 }
 fn superopt_27(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #27\n");
+panic!("Log function: superopt #27\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -1342,7 +1342,7 @@ _ => {},
 }
 }
 fn superopt_28(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #28\n");
+panic!("Log function: superopt #28\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1401,7 +1401,7 @@ _ => {},
 }
 }
 fn superopt_29(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #29\n");
+panic!("Log function: superopt #29\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -1460,7 +1460,7 @@ _ => {},
 }
 }
 fn superopt_30(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #30\n");
+panic!("Log function: superopt #30\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1519,7 +1519,7 @@ _ => {},
 }
 }
 fn superopt_31(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #31\n");
+panic!("Log function: superopt #31\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1578,7 +1578,7 @@ _ => {},
 }
 }
 fn superopt_32(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #32\n");
+panic!("Log function: superopt #32\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1637,7 +1637,7 @@ _ => {},
 }
 }
 fn superopt_33(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #33\n");
+panic!("Log function: superopt #33\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1696,7 +1696,7 @@ _ => {},
 }
 }
 fn superopt_34(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #34\n");
+panic!("Log function: superopt #34\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -1755,7 +1755,7 @@ _ => {},
 }
 }
 fn superopt_35(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #35\n");
+panic!("Log function: superopt #35\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1814,7 +1814,7 @@ _ => {},
 }
 }
 fn superopt_36(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #36\n");
+panic!("Log function: superopt #36\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -1873,7 +1873,7 @@ _ => {},
 }
 }
 fn superopt_37(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #37\n");
+panic!("Log function: superopt #37\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -1932,7 +1932,7 @@ _ => {},
 }
 }
 fn superopt_38(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #38\n");
+panic!("Log function: superopt #38\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -1992,7 +1992,7 @@ _ => {},
 }
 }
 fn superopt_39(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #39\n");
+panic!("Log function: superopt #39\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2052,7 +2052,7 @@ _ => {},
 }
 }
 fn superopt_40(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #40\n");
+panic!("Log function: superopt #40\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2111,7 +2111,7 @@ _ => {},
 }
 }
 fn superopt_41(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #41\n");
+panic!("Log function: superopt #41\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2171,7 +2171,7 @@ _ => {},
 }
 }
 fn superopt_42(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #42\n");
+panic!("Log function: superopt #42\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -2231,7 +2231,7 @@ _ => {},
 }
 }
 fn superopt_43(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #43\n");
+panic!("Log function: superopt #43\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -2291,7 +2291,7 @@ _ => {},
 }
 }
 fn superopt_44(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #44\n");
+panic!("Log function: superopt #44\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2351,7 +2351,7 @@ _ => {},
 }
 }
 fn superopt_45(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #45\n");
+panic!("Log function: superopt #45\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2411,7 +2411,7 @@ _ => {},
 }
 }
 fn superopt_46(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #46\n");
+panic!("Log function: superopt #46\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2471,7 +2471,7 @@ _ => {},
 }
 }
 fn superopt_47(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #47\n");
+panic!("Log function: superopt #47\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2531,7 +2531,7 @@ _ => {},
 }
 }
 fn superopt_48(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #48\n");
+panic!("Log function: superopt #48\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2591,7 +2591,7 @@ _ => {},
 }
 }
 fn superopt_49(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #49\n");
+panic!("Log function: superopt #49\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2651,7 +2651,7 @@ _ => {},
 }
 }
 fn superopt_50(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #50\n");
+panic!("Log function: superopt #50\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2711,7 +2711,7 @@ _ => {},
 }
 }
 fn superopt_51(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #51\n");
+panic!("Log function: superopt #51\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2771,7 +2771,7 @@ _ => {},
 }
 }
 fn superopt_52(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #52\n");
+panic!("Log function: superopt #52\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2831,7 +2831,7 @@ _ => {},
 }
 }
 fn superopt_53(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #53\n");
+panic!("Log function: superopt #53\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2891,7 +2891,7 @@ _ => {},
 }
 }
 fn superopt_54(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #54\n");
+panic!("Log function: superopt #54\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -2951,7 +2951,7 @@ _ => {},
 }
 }
 fn superopt_55(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #55\n");
+panic!("Log function: superopt #55\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3011,7 +3011,7 @@ _ => {},
 }
 }
 fn superopt_56(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #56\n");
+panic!("Log function: superopt #56\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3071,7 +3071,7 @@ _ => {},
 }
 }
 fn superopt_57(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #57\n");
+panic!("Log function: superopt #57\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3131,7 +3131,7 @@ _ => {},
 }
 }
 fn superopt_58(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #58\n");
+panic!("Log function: superopt #58\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3191,7 +3191,7 @@ _ => {},
 }
 }
 fn superopt_59(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #59\n");
+panic!("Log function: superopt #59\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3251,7 +3251,7 @@ _ => {},
 }
 }
 fn superopt_60(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #60\n");
+panic!("Log function: superopt #60\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3311,7 +3311,7 @@ _ => {},
 }
 }
 fn superopt_61(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #61\n");
+panic!("Log function: superopt #61\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3371,7 +3371,7 @@ _ => {},
 }
 }
 fn superopt_62(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #62\n");
+panic!("Log function: superopt #62\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3431,7 +3431,7 @@ _ => {},
 }
 }
 fn superopt_63(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #63\n");
+panic!("Log function: superopt #63\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3491,7 +3491,7 @@ _ => {},
 }
 }
 fn superopt_64(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #64\n");
+panic!("Log function: superopt #64\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3551,7 +3551,7 @@ _ => {},
 }
 }
 fn superopt_65(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #65\n");
+panic!("Log function: superopt #65\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3611,7 +3611,7 @@ _ => {},
 }
 }
 fn superopt_66(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #66\n");
+panic!("Log function: superopt #66\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3671,7 +3671,7 @@ _ => {},
 }
 }
 fn superopt_67(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #67\n");
+panic!("Log function: superopt #67\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3731,7 +3731,7 @@ _ => {},
 }
 }
 fn superopt_68(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #68\n");
+panic!("Log function: superopt #68\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3791,7 +3791,7 @@ _ => {},
 }
 }
 fn superopt_69(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #69\n");
+panic!("Log function: superopt #69\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3851,7 +3851,7 @@ _ => {},
 }
 }
 fn superopt_70(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #70\n");
+panic!("Log function: superopt #70\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3911,7 +3911,7 @@ _ => {},
 }
 }
 fn superopt_71(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #71\n");
+panic!("Log function: superopt #71\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -3971,7 +3971,7 @@ _ => {},
 }
 }
 fn superopt_72(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #72\n");
+panic!("Log function: superopt #72\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4031,7 +4031,7 @@ _ => {},
 }
 }
 fn superopt_73(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #73\n");
+panic!("Log function: superopt #73\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4091,7 +4091,7 @@ _ => {},
 }
 }
 fn superopt_74(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #74\n");
+panic!("Log function: superopt #74\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4151,7 +4151,7 @@ _ => {},
 }
 }
 fn superopt_75(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #75\n");
+panic!("Log function: superopt #75\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4211,7 +4211,7 @@ _ => {},
 }
 }
 fn superopt_76(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #76\n");
+panic!("Log function: superopt #76\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4270,7 +4270,7 @@ _ => {},
 }
 }
 fn superopt_77(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #77\n");
+panic!("Log function: superopt #77\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4330,7 +4330,7 @@ _ => {},
 }
 }
 fn superopt_78(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #78\n");
+panic!("Log function: superopt #78\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4389,7 +4389,7 @@ _ => {},
 }
 }
 fn superopt_79(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #79\n");
+panic!("Log function: superopt #79\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -4448,7 +4448,7 @@ _ => {},
 }
 }
 fn superopt_80(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #80\n");
+panic!("Log function: superopt #80\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4508,7 +4508,7 @@ _ => {},
 }
 }
 fn superopt_81(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #81\n");
+panic!("Log function: superopt #81\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4567,7 +4567,7 @@ _ => {},
 }
 }
 fn superopt_82(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #82\n");
+panic!("Log function: superopt #82\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4628,7 +4628,7 @@ _ => {},
 }
 }
 fn superopt_83(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #83\n");
+panic!("Log function: superopt #83\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4688,7 +4688,7 @@ _ => {},
 }
 }
 fn superopt_84(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #84\n");
+panic!("Log function: superopt #84\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4767,7 +4767,7 @@ _ => {},
 }
 }
 fn superopt_85(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #85\n");
+panic!("Log function: superopt #85\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4847,7 +4847,7 @@ _ => {},
 }
 }
 fn superopt_86(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #86\n");
+panic!("Log function: superopt #86\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -4927,7 +4927,7 @@ _ => {},
 }
 }
 fn superopt_87(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #87\n");
+panic!("Log function: superopt #87\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -5008,7 +5008,7 @@ _ => {},
 }
 }
 fn superopt_88(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #88\n");
+panic!("Log function: superopt #88\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -5202,7 +5202,7 @@ _ => {},
 }
 }
 fn superopt_89(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #89\n");
+panic!("Log function: superopt #89\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -5282,7 +5282,7 @@ _ => {},
 }
 }
 fn superopt_90(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #90\n");
+panic!("Log function: superopt #90\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -5359,7 +5359,7 @@ _ => {},
 }
 }
 fn superopt_91(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #91\n");
+panic!("Log function: superopt #91\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -5436,7 +5436,7 @@ _ => {},
 }
 }
 fn superopt_92(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #92\n");
+panic!("Log function: superopt #92\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -5516,7 +5516,7 @@ _ => {},
 }
 }
 fn superopt_93(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #93\n");
+panic!("Log function: superopt #93\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -5597,7 +5597,7 @@ _ => {},
 }
 }
 fn superopt_94(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #94\n");
+panic!("Log function: superopt #94\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -5678,7 +5678,7 @@ _ => {},
 }
 }
 fn superopt_95(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #95\n");
+panic!("Log function: superopt #95\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -5756,7 +5756,7 @@ _ => {},
 }
 }
 fn superopt_96(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #96\n");
+panic!("Log function: superopt #96\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -5834,7 +5834,7 @@ _ => {},
 }
 }
 fn superopt_97(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #97\n");
+panic!("Log function: superopt #97\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -5912,7 +5912,7 @@ _ => {},
 }
 }
 fn superopt_98(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #98\n");
+panic!("Log function: superopt #98\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -5993,7 +5993,7 @@ _ => {},
 }
 }
 fn superopt_99(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #99\n");
+panic!("Log function: superopt #99\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -6094,7 +6094,7 @@ _ => {},
 }
 }
 fn superopt_100(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #100\n");
+panic!("Log function: superopt #100\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -6194,7 +6194,7 @@ _ => {},
 }
 }
 fn superopt_101(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #101\n");
+panic!("Log function: superopt #101\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -6295,7 +6295,7 @@ _ => {},
 }
 }
 fn superopt_102(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #102\n");
+panic!("Log function: superopt #102\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -6412,7 +6412,7 @@ _ => {},
 }
 }
 fn superopt_103(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #103\n");
+panic!("Log function: superopt #103\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -6506,7 +6506,7 @@ _ => {},
 }
 }
 fn superopt_104(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #104\n");
+panic!("Log function: superopt #104\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
@@ -6680,7 +6680,7 @@ _ => {},
 }
 }
 fn superopt_105(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #105\n");
+panic!("Log function: superopt #105\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -6911,7 +6911,7 @@ _ => {},
 }
 }
 fn superopt_106(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #106\n");
+panic!("Log function: superopt #106\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -8720,7 +8720,7 @@ _ => {},
 }
 }
 fn superopt_107(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #107\n");
+panic!("Log function: superopt #107\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -9619,7 +9619,7 @@ _ => {},
 }
 }
 fn superopt_108(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #108\n");
+panic!("Log function: superopt #108\n");
 match pos.func.dfg[inst] {
 InstructionData::BinaryImm64 { opcode, arg, imm } => {
 let arg_0 = arg;
@@ -11410,7 +11410,7 @@ _ => {},
 }
 }
 fn superopt_109(pos: &mut FuncCursor, inst: Inst) {
-println!("Log function: superopt #109\n");
+panic!("Log function: superopt #109\n");
 match pos.func.dfg[inst] {
 InstructionData::Binary { opcode, args } => {
 let arg_0 = args;
