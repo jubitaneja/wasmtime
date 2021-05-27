@@ -171,8 +171,8 @@ impl Context {
 
         self.compute_cfg();
         if opt_level != OptLevel::None {
-            self.superopt_baseline(isa)?;
             self.preopt(isa)?;
+            self.superopt_baseline(isa)?;
         }
         if isa.flags().enable_nan_canonicalization() {
             self.canonicalize_nans(isa)?;
