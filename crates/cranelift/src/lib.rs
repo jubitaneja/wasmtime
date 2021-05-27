@@ -444,6 +444,7 @@ impl Compiler for Cranelift {
             None
         };
 
+//println!("function code size in bytes = {}", code_buf.len());
         Ok(CompiledFunction {
             body: code_buf,
             jt_offsets: context.func.jt_offsets,
